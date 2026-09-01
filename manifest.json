@@ -1,0 +1,32 @@
+{
+  "schemaVersion": 1,
+  "id": "xavecorp.openvpn3",
+  "name": "Omarchy OpenVPN3",
+  "version": "0.1.0",
+  "author": "Xave Corp",
+  "license": "MIT",
+  "description": "Manage OpenVPN connections from the Omarchy bar, backed by the openvpn3 CLI.",
+  "kinds": ["bar-widget"],
+  "entryPoints": { "barWidget": "BarWidget.qml" },
+  "barWidget": {
+    "displayName": "Omarchy OpenVPN3",
+    "description": "List openvpn3 configuration profiles and toggle sessions on and off.",
+    "category": "Network",
+    "allowMultiple": false,
+    "defaultSection": "right",
+    "defaults": {
+      "refreshIntervalSec": 5
+    },
+    "schema": [
+      {
+        "key": "refreshIntervalSec",
+        "type": "integer",
+        "label": "Refresh interval (seconds)",
+        "min": 2,
+        "max": 60,
+        "step": 1,
+        "defaultValue": 5
+      }
+    ]
+  }
+}
