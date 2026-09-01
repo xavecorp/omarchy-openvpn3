@@ -81,6 +81,28 @@ reacts without waiting for the next poll.
 - **Refresh interval** (default 5 seconds, range 2–60) — how often the widget
   re-reads configs and sessions.
 
+## Update
+
+The plugin is git-managed, so Omarchy can pull the latest revision for you:
+
+```sh
+omarchy plugin update xavecorp.openvpn3
+omarchy restart shell
+```
+
+To update every git-managed plugin at once, run `omarchy plugin update` with no
+id. The shell restart is required for the reloaded widget to be rebuilt in the
+bar.
+
+If you cloned the plugin somewhere and want to update it by hand, pull the
+repository in place and restart the shell:
+
+```sh
+cd ~/.config/omarchy/plugins/xavecorp.openvpn3   # your install path
+git pull --ff-only
+omarchy restart shell
+```
+
 ## Removal
 
 Disconnect any active session first — removing the plugin does not close a

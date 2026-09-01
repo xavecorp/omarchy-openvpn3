@@ -7,12 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.1] - 2026-09-01
+
 ### Fixed
 
 - Parse the compact `openvpn3 configs-list` table layout used by current
   openvpn3 versions. Previously only the older path-based layout was
   recognized, so profiles were listed as "No configs" and no toggle switch was
   shown even while a session was connected. Both layouts are now supported.
+
+### Documentation
+
+- Document how to update the plugin, both with `omarchy plugin update` and by a
+  manual `git pull` in the install directory.
 
 ## [0.1.0] - 2026-09-01
 
@@ -35,5 +42,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Pure parsing helpers in `Model.js` covered by Node unit tests
   (`node --test`).
 
-[Unreleased]: https://github.com/xavecorp/omartchy-openvpn3/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/xavecorp/omartchy-openvpn3/compare/v0.1.1...HEAD
+[0.1.1]: https://github.com/xavecorp/omartchy-openvpn3/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/xavecorp/omartchy-openvpn3/releases/tag/v0.1.0
