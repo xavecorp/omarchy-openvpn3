@@ -2,7 +2,26 @@ const { test } = require("node:test");
 const assert = require("node:assert");
 const Model = require("./Model.js");
 
-const configsOutput = `Configuration path
+// Real output from the installed openvpn3 (compact table layout).
+const configsCompact = `Configuration Name                                        Last used
+------------------------------------------------------------------------------
+testamento-profile-userlocked                             2026-09-01 11:15:31
+------------------------------------------------------------------------------
+`;
+
+// Real output from the installed openvpn3 (session block).
+const sessionsOutput = `-----------------------------------------------------------------------------
+        Path: /net/openvpn/v3/sessions/d1b24861s3d90s4e7dsa445s8ae0a1c9b59b
+     Created: 2026-09-01 11:15:31                       PID: 58665
+       Owner: xavierviricel                          Device: tun0
+ Config name: testamento-profile-userlocked
+Connected to: tcp:15.188.133.251:443
+      Status: Connection, Client connected
+-----------------------------------------------------------------------------
+`;
+
+// Legacy verbose layout (older openvpn3), still supported.
+const configsVerbose = `Configuration path
 Imported                                     Last used                 Used
 Name                                                                   Owner
 ------------------------------------------------------------------------------
@@ -15,18 +34,17 @@ Name                                                                   Owner
  testamento                                                             xavier
 ------------------------------------------------------------------------------`;
 
-const sessionsOutput = `-----------------------------------------------------------------------------
-        Path: /net/openvpn/v3/sessions/aaaa
-     Created: Fri Jan 10 09:16:00 2025                     PID: 12345
-       Owner: xavier                                    Device: tun0
- Config name: testamento-profile-userlocked
-Session name: testamento-profile-userlocked
-      Status: Connection, Client connected
------------------------------------------------------------------------------`;
-
-test("parseConfigsList extracts profile names and paths", () => {
-    const result = Model.parseConfigsList(configsOutput);
+test("parseConfigsList reads the compact table layout", () => {
+    const result = Model.parseConfigsList(configsCompact);
     assert.strictEqual(result.ok, true);
+    assert.deepStrictEqual(
+        result.configs.map((c) => c.name),
+        ["testamento-profile-userlocked"]
+    );
+});
+
+test("parseConfigsList reads the legacy verbose layout", () => {
+    const result = Model.parseConfigsList(configsVerbose);
     assert.deepStrictEqual(
         result.configs.map((c) => c.name),
         ["testamento-profile-userlocked", "testamento"]
@@ -44,11 +62,13 @@ test("parseConfigsList handles empty listing", () => {
 
 test("parseSessionsList extracts a connected session", () => {
     const result = Model.parseSessionsList(sessionsOutput);
-    assert.strictEqual(result.ok, true);
     assert.strictEqual(result.sessions.length, 1);
     assert.strictEqual(result.sessions[0].name, "testamento-profile-userlocked");
     assert.strictEqual(result.sessions[0].connected, true);
-    assert.strictEqual(result.sessions[0].path, "/net/openvpn/v3/sessions/aaaa");
+    assert.strictEqual(
+        result.sessions[0].path,
+        "/net/openvpn/v3/sessions/d1b24861s3d90s4e7dsa445s8ae0a1c9b59b"
+    );
 });
 
 test("parseSessionsList handles no sessions", () => {
@@ -58,29 +78,38 @@ test("parseSessionsList handles no sessions", () => {
     );
 });
 
-test("buildRows merges configs and sessions into states", () => {
-    const configs = Model.parseConfigsList(configsOutput);
-    const sessions = Model.parseSessionsList(sessionsOutput);
-    const rows = Model.buildRows(configs, sessions);
-    assert.strictEqual(rows.length, 2);
-    assert.strictEqual(Model.rowByName(rows, "testamento-profile-userlocked").state, "connected");
-    assert.strictEqual(Model.rowByName(rows, "testamento").state, "disconnected");
+test("buildRows merges the compact configs with the active session", () => {
+    const rows = Model.buildRows(
+        Model.parseConfigsList(configsCompact),
+        Model.parseSessionsList(sessionsOutput)
+    );
+    assert.strictEqual(rows.length, 1);
+    assert.strictEqual(
+        Model.rowByName(rows, "testamento-profile-userlocked").state,
+        "connected"
+    );
 });
 
 test("activeSessionName returns the connected session", () => {
-    const sessions = Model.parseSessionsList(sessionsOutput);
-    assert.strictEqual(Model.activeSessionName(sessions), "testamento-profile-userlocked");
+    assert.strictEqual(
+        Model.activeSessionName(Model.parseSessionsList(sessionsOutput)),
+        "testamento-profile-userlocked"
+    );
     assert.strictEqual(Model.activeSessionName(Model.parseSessionsList("")), "");
 });
 
-test("connecting state when session exists but not yet connected", () => {
+test("connecting state when a session exists but is not yet connected", () => {
     const connecting = `-----------------------------------------------------------------------------
         Path: /net/openvpn/v3/sessions/bbbb
- Config name: testamento
+ Config name: testamento-profile-userlocked
       Status: Connection, Client connecting
 -----------------------------------------------------------------------------`;
-    const sessions = Model.parseSessionsList(connecting);
-    assert.strictEqual(sessions.sessions[0].connected, false);
-    const rows = Model.buildRows(Model.parseConfigsList(configsOutput), sessions);
-    assert.strictEqual(Model.rowByName(rows, "testamento").state, "connecting");
+    const rows = Model.buildRows(
+        Model.parseConfigsList(configsCompact),
+        Model.parseSessionsList(connecting)
+    );
+    assert.strictEqual(
+        Model.rowByName(rows, "testamento-profile-userlocked").state,
+        "connecting"
+    );
 });

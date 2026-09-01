@@ -32,6 +32,23 @@ function isSeparator(line) {
 // the last data row of the record, because the timestamp row starts with a
 // weekday token while the name row does not.
 //
+// Two layouts exist across openvpn3 versions:
+//
+//   Compact table (current):
+//     Configuration Name                       Last used
+//     ----------------------------------------------------
+//     testamento-profile-userlocked            2026-09-01 11:15:31
+//     ----------------------------------------------------
+//
+//   Verbose, path-based (older):
+//     /net/openvpn/v3/configuration/1a2b3c
+//      Fri Jan 10 09:15:22 2025    ...    3
+//      testamento-profile-userlocked           owner
+//
+// Both are supported: a record introduced by a config path line is parsed the
+// verbose way; any other data row between separators is a compact row whose
+// first column (before the run of spaces) is the profile name.
+//
 // Returns { ok, configs: [{ name, path }], error }.
 function parseConfigsList(raw) {
     var text = String(raw || "").trim();
@@ -44,15 +61,19 @@ function parseConfigsList(raw) {
 
     var lines = toLines(raw);
     var configs = [];
+    var seen = {};
     var pendingPath = "";
     var recordLines = [];
 
-    function flush() {
+    function push(name, path) {
+        if (name === "" || seen[name] === true) return;
+        seen[name] = true;
+        configs.push({ name: name, path: path });
+    }
+
+    function flushVerbose() {
         if (pendingPath !== "") {
-            var name = extractConfigName(recordLines);
-            if (name !== "") {
-                configs.push({ name: name, path: pendingPath });
-            }
+            push(nameFromRecord(recordLines), pendingPath);
         }
         pendingPath = "";
         recordLines = [];
@@ -67,32 +88,51 @@ function parseConfigsList(raw) {
 
         var pathIndex = trimmed.indexOf(CONFIG_PATH_PREFIX);
         if (pathIndex !== -1) {
-            flush();
+            flushVerbose();
             pendingPath = trimmed.slice(pathIndex).split(/\s+/)[0];
             continue;
         }
 
-        // Header rows carry these column labels; skip them.
-        if (/^(Configuration|Imported|Name)\b/.test(trimmed)) {
+        if (isHeaderRow(trimmed)) {
             continue;
         }
 
         if (pendingPath !== "") {
+            // Inside a verbose record: collect its rows for nameFromRecord.
             recordLines.push(trimmed);
+            continue;
         }
+
+        // Compact table row: "<name>   <last used>".
+        push(firstColumn(trimmed), "");
     }
-    flush();
+    flushVerbose();
 
     return { ok: true, configs: configs, error: "" };
 }
 
+// Column-label rows that must never be treated as profiles. The compact table
+// header is exactly "Configuration Name ... Last used"; the verbose layout has
+// "Configuration path", "Imported", and a bare "Name" header.
+function isHeaderRow(trimmed) {
+    if (/^Configuration (Name|path)\b/.test(trimmed)) return true;
+    if (/^(Imported|Name)\b/.test(trimmed)) return true;
+    return false;
+}
+
+// The profile name is the first column, delimited from the trailing column
+// (last-used date or owner) by a run of two or more spaces.
+function firstColumn(rowText) {
+    var parts = rowText.trim().split(/\s{2,}/);
+    return parts.length > 0 ? parts[0].trim() : "";
+}
+
 var WEEKDAY_PREFIX = /^(Mon|Tue|Wed|Thu|Fri|Sat|Sun)\b/;
 
-// Picks the profile name out of a record's data rows. The timestamp/usage row
-// starts with a weekday, so the name row is the first row that does not — or,
-// failing that, the last row. The name is the first whitespace-delimited
-// column (owner is the trailing column).
-function extractConfigName(recordLines) {
+// Picks the profile name out of a verbose record's data rows. The timestamp
+// row starts with a weekday, so the name row is the first row that does not —
+// or, failing that, the last row.
+function nameFromRecord(recordLines) {
     if (!(recordLines instanceof Array) || recordLines.length === 0) {
         return "";
     }
@@ -106,8 +146,7 @@ function extractConfigName(recordLines) {
     if (nameRow === "") {
         nameRow = recordLines[recordLines.length - 1];
     }
-    var parts = nameRow.trim().split(/\s{2,}/);
-    return parts.length > 0 ? parts[0].trim() : "";
+    return firstColumn(nameRow);
 }
 
 // Parses `openvpn3 sessions-list`.

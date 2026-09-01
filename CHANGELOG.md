@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- Parse the compact `openvpn3 configs-list` table layout used by current
+  openvpn3 versions. Previously only the older path-based layout was
+  recognized, so profiles were listed as "No configs" and no toggle switch was
+  shown even while a session was connected. Both layouts are now supported.
+
 ## [0.1.0] - 2026-09-01
 
 ### Added
