@@ -11,11 +11,66 @@
 var CONFIG_PATH_PREFIX = "/net/openvpn/v3/configuration/";
 var SESSION_PATH_PREFIX = "/net/openvpn/v3/sessions/";
 
-// Splits raw command output into trimmed, non-empty lines.
+// Hard caps. The openvpn3 CLI output is untrusted input from a subprocess: a
+// runaway, corrupt, or hostile process must never be able to exhaust memory or
+// smuggle rich-text/terminal escapes into the UI. Every external string is
+// clipped and every record list is bounded before it reaches the widgets.
+var MAX_OUTPUT_CHARS = 262144; // 256 KiB of stdout/stderr is far beyond any real listing.
+var MAX_RECORDS = 256;         // No sane machine has hundreds of profiles/sessions.
+var MAX_NAME_LEN = 128;        // Profile / session config names.
+var MAX_STATUS_LEN = 160;      // Human-readable status line.
+var MAX_PATH_LEN = 256;        // D-Bus object paths.
+var MAX_ERROR_LEN = 240;       // Error text surfaced to the user.
+
+// The characters allowed inside a validated D-Bus object path segment. The
+// openvpn3 paths are ASCII word chars plus separators; anything else is a sign
+// the token was not really a path and must be rejected.
+var PATH_TAIL = /^[A-Za-z0-9._\/-]+$/;
+
+// Truncates raw command output to a sane ceiling before any parsing runs, so a
+// process emitting gigabytes cannot blow up the string ops downstream.
+function boundRaw(raw) {
+    var text = String(raw || "");
+    return text.length > MAX_OUTPUT_CHARS ? text.slice(0, MAX_OUTPUT_CHARS) : text;
+}
+
+// Sanitizes and clips an arbitrary external string for safe display. Strips
+// control characters (including ANSI escapes and newlines) that could corrupt
+// the layout or smuggle markup, collapses inner whitespace, then truncates to
+// `max`. This is the single choke point every user-visible external field
+// passes through.
+function clip(value, max) {
+    var limit = typeof max === "number" && max > 0 ? max : MAX_NAME_LEN;
+    var text = String(value === undefined || value === null ? "" : value)
+        // eslint-disable-next-line no-control-regex
+        .replace(/[\u0000-\u001F\u007F-\u009F]/g, " ")
+        .replace(/\s+/g, " ")
+        .trim();
+    return text.length > limit ? text.slice(0, limit) : text;
+}
+
+// Validates a candidate D-Bus object path against an expected prefix. Returns
+// the clipped path only when it starts with the prefix and its tail is a plain
+// path token; otherwise "". Writes must never act on a path that failed this.
+function validatePath(candidate, prefix) {
+    var text = clip(candidate, MAX_PATH_LEN);
+    if (text.indexOf(prefix) !== 0) return "";
+    var tail = text.slice(prefix.length);
+    if (tail === "" || !PATH_TAIL.test(tail)) return "";
+    return text;
+}
+
+// Splits raw command output into trimmed, non-empty lines, bounded by the
+// output ceiling and the record cap so a huge listing cannot grow unbounded.
 function toLines(raw) {
-    return String(raw || "")
+    var lines = boundRaw(raw)
         .split("\n")
         .map(function (line) { return line.replace(/\s+$/, ""); });
+    // Even after the byte ceiling, cap the line count: pathological output made
+    // of millions of one-char lines would otherwise slip past MAX_OUTPUT_CHARS
+    // only loosely. Keep generous headroom over MAX_RECORDS for header rows.
+    var lineCeiling = MAX_RECORDS * 16;
+    return lines.length > lineCeiling ? lines.slice(0, lineCeiling) : lines;
 }
 
 // A separator row is the dashed rule the CLI prints between records.
@@ -66,9 +121,11 @@ function parseConfigsList(raw) {
     var recordLines = [];
 
     function push(name, path) {
-        if (name === "" || seen[name] === true) return;
-        seen[name] = true;
-        configs.push({ name: name, path: path });
+        var safeName = clip(name, MAX_NAME_LEN);
+        if (safeName === "" || seen[safeName] === true) return;
+        if (configs.length >= MAX_RECORDS) return;
+        seen[safeName] = true;
+        configs.push({ name: safeName, path: validatePath(path, CONFIG_PATH_PREFIX) });
     }
 
     function flushVerbose() {
@@ -169,7 +226,7 @@ function parseSessionsList(raw) {
         var trimmed = lines[i].trim();
         if (isSeparator(lines[i])) {
             if (current && current.name !== "") {
-                sessions.push(finalizeSession(current));
+                if (sessions.length < MAX_RECORDS) sessions.push(finalizeSession(current));
             }
             current = { name: "", path: "", status: "" };
             continue;
@@ -180,7 +237,7 @@ function parseSessionsList(raw) {
         assignSessionField(current, trimmed);
     }
     if (current && current.name !== "") {
-        sessions.push(finalizeSession(current));
+        if (sessions.length < MAX_RECORDS) sessions.push(finalizeSession(current));
     }
 
     return { ok: true, sessions: sessions, error: "" };
@@ -190,7 +247,10 @@ function parseSessionsList(raw) {
 function assignSessionField(session, trimmed) {
     var pathIndex = trimmed.indexOf(SESSION_PATH_PREFIX);
     if (pathIndex !== -1) {
-        session.path = trimmed.slice(pathIndex).split(/\s+/)[0];
+        session.path = validatePath(
+            trimmed.slice(pathIndex).split(/\s+/)[0],
+            SESSION_PATH_PREFIX
+        );
         return;
     }
     var match = /^([A-Za-z ]+):\s*(.+)$/.exec(trimmed);
@@ -200,9 +260,9 @@ function assignSessionField(session, trimmed) {
     var label = match[1].trim().toLowerCase();
     var value = match[2].trim();
     if (label === "config name") {
-        session.name = value;
+        session.name = clip(value, MAX_NAME_LEN);
     } else if (label === "status") {
-        session.status = value;
+        session.status = clip(value, MAX_STATUS_LEN);
     }
 }
 
@@ -218,8 +278,11 @@ function finalizeSession(session) {
 
 // Merges configs and sessions into the rows the panel renders.
 //
-// Returns [{ name, path, state }] where state is one of:
+// Returns [{ name, configPath, sessionPath, state }] where state is one of:
 //   "connected" | "connecting" | "disconnected".
+//
+// Both paths are already validated D-Bus object paths (or "") so that state
+// changes can target an exact object ID instead of an ambiguous name.
 function buildRows(configsResult, sessionsResult) {
     var configs = configsResult && configsResult.configs instanceof Array
         ? configsResult.configs
@@ -231,8 +294,9 @@ function buildRows(configsResult, sessionsResult) {
     return configs.map(function (cfg) {
         var session = sessionByName(sessions, cfg.name);
         return {
-            name: cfg.name,
-            path: cfg.path,
+            name: clip(cfg.name, MAX_NAME_LEN),
+            configPath: validatePath(cfg.path, CONFIG_PATH_PREFIX),
+            sessionPath: session ? validatePath(session.path, SESSION_PATH_PREFIX) : "",
             state: sessionState(session),
         };
     });
@@ -261,11 +325,11 @@ function activeSessionName(sessionsResult) {
         : [];
     for (var i = 0; i < sessions.length; i++) {
         if (sessions[i].connected) {
-            return sessions[i].name;
+            return clip(sessions[i].name, MAX_NAME_LEN);
         }
     }
     // Fall back to a connecting session so the bar still reflects activity.
-    return sessions.length > 0 ? sessions[0].name : "";
+    return sessions.length > 0 ? clip(sessions[0].name, MAX_NAME_LEN) : "";
 }
 
 function rowByName(rows, name) {
@@ -297,7 +361,33 @@ function heroText(activeName, state) {
     if (!activeName) {
         return "Disconnected";
     }
-    return stateLabel(state) + " · " + activeName;
+    return stateLabel(state) + " · " + clip(activeName, MAX_NAME_LEN);
+}
+
+// Resolves the validated config object path for a row, used to start a session
+// against an exact ID rather than an ambiguous name. Returns "" when the row is
+// unknown or its path did not validate.
+function configPathForName(rows, name) {
+    var row = rowByName(rows, name);
+    return row && typeof row.configPath === "string" ? row.configPath : "";
+}
+
+// Resolves the validated session object path for a row, used to disconnect an
+// exact running session rather than by name. Returns "" when there is no
+// running session or its path did not validate.
+function sessionPathForName(rows, name) {
+    var row = rowByName(rows, name);
+    return row && typeof row.sessionPath === "string" ? row.sessionPath : "";
+}
+
+// Clips arbitrary error text (e.g. a CLI stderr line) for safe, bounded display.
+function clipError(value) {
+    return clip(value, MAX_ERROR_LEN);
+}
+
+// Clips a display name for safe, bounded rendering in the UI layers.
+function clipName(value) {
+    return clip(value, MAX_NAME_LEN);
 }
 
 if (typeof module !== "undefined") {
@@ -309,5 +399,16 @@ if (typeof module !== "undefined") {
         rowByName: rowByName,
         stateLabel: stateLabel,
         heroText: heroText,
+        configPathForName: configPathForName,
+        sessionPathForName: sessionPathForName,
+        validatePath: validatePath,
+        clip: clip,
+        clipError: clipError,
+        clipName: clipName,
+        CONFIG_PATH_PREFIX: CONFIG_PATH_PREFIX,
+        SESSION_PATH_PREFIX: SESSION_PATH_PREFIX,
+        MAX_NAME_LEN: MAX_NAME_LEN,
+        MAX_ERROR_LEN: MAX_ERROR_LEN,
+        MAX_RECORDS: MAX_RECORDS,
     };
 }

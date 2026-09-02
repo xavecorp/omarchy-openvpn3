@@ -7,6 +7,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.2] - 2026-09-02
+
+### Security
+
+- Resolve the `openvpn3` client to a trusted absolute path from a fixed
+  allowlist instead of looking it up through the inherited `PATH`, so a hostile
+  binary earlier on `PATH` can no longer shadow the real client.
+- Start and stop sessions by their exact validated D-Bus object path
+  (`session-start --config-path`, `session-manage --session-path --disconnect`)
+  rather than by an ambiguous profile name, so two profiles sharing a name can
+  never be confused.
+- Sanitize and length-cap every field parsed from the CLI (profile names,
+  status lines, object paths, error text) and render them as `PlainText`,
+  preventing terminal-escape or rich-text injection from the subprocess output.
+- Bound retained command output and cap the number of parsed records so a
+  runaway or hostile process cannot exhaust memory.
+
+### Fixed
+
+- Run every `openvpn3` invocation under `timeout`, which terminates the command
+  and its child process group as a unit, so a hung tunnel process no longer
+  lingers after a watchdog fires.
+- Chain the sessions read only after a successful configs read and apply parsed
+  output only on a clean exit, so an aborted or failed read never resurrects the
+  read chain or overwrites good state with garbage.
+
+### Changed
+
+- Render the profile name in the panel slightly smaller than the default font
+  so long names take less horizontal room.
+
 ## [0.1.1] - 2026-09-01
 
 ### Fixed
@@ -42,6 +73,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Pure parsing helpers in `Model.js` covered by Node unit tests
   (`node --test`).
 
-[Unreleased]: https://github.com/xavecorp/omartchy-openvpn3/compare/v0.1.1...HEAD
+[Unreleased]: https://github.com/xavecorp/omartchy-openvpn3/compare/v0.1.2...HEAD
+[0.1.2]: https://github.com/xavecorp/omartchy-openvpn3/compare/v0.1.1...v0.1.2
 [0.1.1]: https://github.com/xavecorp/omartchy-openvpn3/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/xavecorp/omartchy-openvpn3/releases/tag/v0.1.0

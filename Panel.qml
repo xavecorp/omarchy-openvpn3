@@ -117,6 +117,7 @@ Panel {
                     Layout.fillWidth: true
                     visible: root.configs.length === 0 && root.service && root.service.available
                     text: "No configs — import one with:\nopenvpn3 config-import --config <file>.ovpn"
+                    textFormat: Text.PlainText
                     color: root.dim
                     font.family: root.fontFamily
                     wrapMode: Text.WordWrap
@@ -138,15 +139,23 @@ Panel {
                         spacing: Style.space(8)
 
                         Text {
+                            id: nameText
                             Layout.fillWidth: true
-                            text: row.modelData.name
+                            text: Model.clipName(row.modelData.name)
+                            textFormat: Text.PlainText
                             color: root.foreground
                             font.family: root.fontFamily
+                            // Render the profile name a touch smaller than the
+                            // default so long names take less room; derived from
+                            // the resolved default size so it still respects the
+                            // shell's font scaling.
+                            font.pixelSize: Math.round(Qt.application.font.pixelSize * 0.85)
                             elide: Text.ElideRight
                         }
 
                         Text {
                             text: Model.stateLabel(row.rowState)
+                            textFormat: Text.PlainText
                             color: row.rowState === "error" ? root.urgent : root.dim
                             font.family: root.fontFamily
                             elide: Text.ElideRight
@@ -166,7 +175,8 @@ Panel {
                 Text {
                     Layout.fillWidth: true
                     visible: root.service && root.service.lastError !== ""
-                    text: root.service ? root.service.lastError : ""
+                    text: root.service ? Model.clipError(root.service.lastError) : ""
+                    textFormat: Text.PlainText
                     color: root.urgent
                     font.family: root.fontFamily
                     wrapMode: Text.WordWrap

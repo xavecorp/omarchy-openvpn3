@@ -4,6 +4,7 @@ import Quickshell
 import Quickshell.Io
 import qs.Commons
 import qs.Ui
+import "Model.js" as Model
 
 // Bar entry point: an icon that answers "am I connected?", and the host for
 // the panel that answers "which profile?".
@@ -17,7 +18,7 @@ BarWidget {
     readonly property color urgentColor: bar ? bar.urgent : Color.urgent
 
     readonly property string labelText: vpnState === "connected"
-        ? "OpenVPN3: " + service.activeName
+        ? "OpenVPN3: " + Model.clipName(service.activeName)
         : "OpenVPN3"
 
     readonly property color iconColor: {
