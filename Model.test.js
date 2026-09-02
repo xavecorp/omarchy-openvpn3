@@ -233,3 +233,57 @@ test("heroText clips the active name", () => {
     assert.ok(hero.length <= "Connected · ".length + Model.MAX_NAME_LEN);
     assert.ok(hero.indexOf("Connected · ") === 0);
 });
+
+// ---- JSON configs listing (preferred source, keyed by object path) ---------
+
+const configsJson = `{
+    "/net/openvpn/v3/configuration/0c19147cx7ecex4846xbc1axb44fdb7e730c" : {
+        "name" : "testamento-profile-userlocked",
+        "owner" : "xavierviricel",
+        "valid" : true
+    }
+}`;
+
+test("parseConfigsListJson extracts name keyed by the exact object path", () => {
+    const result = Model.parseConfigsListJson(configsJson);
+    assert.strictEqual(result.ok, true);
+    assert.strictEqual(result.configs.length, 1);
+    assert.strictEqual(result.configs[0].name, "testamento-profile-userlocked");
+    assert.strictEqual(
+        result.configs[0].path,
+        "/net/openvpn/v3/configuration/0c19147cx7ecex4846xbc1axb44fdb7e730c"
+    );
+});
+
+test("parseConfigsListJson feeds a resolvable configPath end to end", () => {
+    const rows = Model.buildRows(
+        Model.parseConfigsListJson(configsJson),
+        Model.parseSessionsList("")
+    );
+    assert.strictEqual(
+        Model.configPathForName(rows, "testamento-profile-userlocked"),
+        "/net/openvpn/v3/configuration/0c19147cx7ecex4846xbc1axb44fdb7e730c"
+    );
+});
+
+test("parseConfigsListJson handles empty and malformed input", () => {
+    assert.deepStrictEqual(
+        Model.parseConfigsListJson(""),
+        { ok: true, configs: [], error: "" }
+    );
+    const bad = Model.parseConfigsListJson("{ not json");
+    assert.strictEqual(bad.ok, false);
+    assert.deepStrictEqual(bad.configs, []);
+});
+
+test("parseConfigsListJson skips entries with an invalid object path", () => {
+    const raw = `{
+        "/etc/passwd" : { "name" : "evil" },
+        "/net/openvpn/v3/configuration/good" : { "name" : "real" }
+    }`;
+    const result = Model.parseConfigsListJson(raw);
+    assert.deepStrictEqual(
+        result.configs.map((c) => c.name),
+        ["real"]
+    );
+});

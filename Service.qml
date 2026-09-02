@@ -7,8 +7,8 @@ import "Model.js" as Model
 // panel can change shape without touching any of this.
 //
 // Two read commands feed the UI on a poll:
-//   openvpn3 configs-list   -> installed configuration profiles
-//   openvpn3 sessions-list  -> running sessions
+//   openvpn3 configs-list --json  -> installed profiles, keyed by object path
+//   openvpn3 sessions-list        -> running sessions
 // Two write commands are dispatched by the toggle. They act on the exact,
 // validated D-Bus object path of the profile/session (never an ambiguous
 // name), so two profiles that share a display name can never be confused:
@@ -167,13 +167,13 @@ Item {
         _configsOutput = ""
         _readAborted = false
         refreshing = true
-        configsProcess.command = wrap(readTimeoutSec, ["configs-list"])
+        configsProcess.command = wrap(readTimeoutSec, ["configs-list", "--json"])
         configsProcess.running = true
         if (!watchdog.running) watchdog.restart()
     }
 
     function applyReads() {
-        var configsResult = Model.parseConfigsList(_configsOutput)
+        var configsResult = Model.parseConfigsListJson(_configsOutput)
         var sessionsResult = Model.parseSessionsList(_sessionsOutput)
         configs = Model.buildRows(configsResult, sessionsResult)
         activeName = Model.activeSessionName(sessionsResult)

@@ -79,6 +79,55 @@ function isSeparator(line) {
     return trimmed.length > 0 && /^-+$/.test(trimmed);
 }
 
+// Parses `openvpn3 configs-list --json`.
+//
+// The JSON is an object keyed by the D-Bus configuration object path, each
+// value describing one profile:
+//
+//   {
+//     "/net/openvpn/v3/configuration/0c19...": {
+//       "name": "testamento-profile-userlocked",
+//       ...
+//     }
+//   }
+//
+// This is the preferred source because the exact object path is the key, so no
+// table scraping is needed and every row carries a validated path. Malformed
+// JSON, or entries whose path/name fail validation, are skipped rather than
+// throwing. Returns { ok, configs: [{ name, path }], error }.
+function parseConfigsListJson(raw) {
+    var text = boundRaw(raw).trim();
+    if (text === "") {
+        return { ok: true, configs: [], error: "" };
+    }
+
+    var parsed;
+    try {
+        parsed = JSON.parse(text);
+    } catch (e) {
+        return { ok: false, configs: [], error: "invalid JSON" };
+    }
+    if (!parsed || typeof parsed !== "object") {
+        return { ok: true, configs: [], error: "" };
+    }
+
+    var configs = [];
+    var seen = {};
+    var keys = Object.keys(parsed);
+    for (var i = 0; i < keys.length; i++) {
+        if (configs.length >= MAX_RECORDS) break;
+        var path = validatePath(keys[i], CONFIG_PATH_PREFIX);
+        if (path === "") continue;
+        var entry = parsed[keys[i]];
+        var name = clip(entry && entry.name ? entry.name : "", MAX_NAME_LEN);
+        if (name === "" || seen[name] === true) continue;
+        seen[name] = true;
+        configs.push({ name: name, path: path });
+    }
+
+    return { ok: true, configs: configs, error: "" };
+}
+
 // Parses `openvpn3 configs-list`.
 //
 // Each profile is a record introduced by its D-Bus config path line, followed
@@ -393,6 +442,7 @@ function clipName(value) {
 if (typeof module !== "undefined") {
     module.exports = {
         parseConfigsList: parseConfigsList,
+        parseConfigsListJson: parseConfigsListJson,
         parseSessionsList: parseSessionsList,
         buildRows: buildRows,
         activeSessionName: activeSessionName,

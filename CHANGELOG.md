@@ -17,7 +17,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Start and stop sessions by their exact validated D-Bus object path
   (`session-start --config-path`, `session-manage --session-path --disconnect`)
   rather than by an ambiguous profile name, so two profiles sharing a name can
-  never be confused.
+  never be confused. Configuration paths are read from
+  `openvpn3 configs-list --json`, whose keys are the object paths, so the exact
+  ID is always available regardless of the CLI's table layout.
 - Sanitize and length-cap every field parsed from the CLI (profile names,
   status lines, object paths, error text) and render them as `PlainText`,
   preventing terminal-escape or rich-text injection from the subprocess output.
