@@ -9,6 +9,10 @@ are running, and lets you start or stop a session with a single toggle. Every
 action is a plain `openvpn3` CLI call — there is no helper daemon, no D-Bus
 binding to install, and nothing runs as root.
 
+![The OpenVPN3 panel: a header with the plugin icon and title, a coloured
+connection-status subtitle, a separator, and a list of profiles — each a card
+with a state dot, name, state label and toggle.](preview.png)
+
 ## Requirements
 
 - `openvpn3` — the OpenVPN 3 Linux client, on your `PATH`

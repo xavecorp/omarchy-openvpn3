@@ -7,3 +7,6 @@
 
 # Node (test tooling only)
 node_modules/
+
+# Local, throwaway QML preview harness (not part of the plugin)
+preview/

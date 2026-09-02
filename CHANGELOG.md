@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-09-02
+
+### Added
+
+- Redesigned panel layout with clearer visual grouping, top to bottom: a header
+  band with the plugin icon and an "OpenVPN3" title; a status subtitle with a
+  coloured state dot (green connected, amber connecting, red error, grey off)
+  and, when connected, the active configuration name; a horizontal separator
+  rule; then the list of profiles.
+- Each profile is now a framed card carrying its own coloured state dot, name,
+  a small coloured state label, and its toggle. The card under the keyboard
+  cursor is highlighted with a stronger fill and border.
+- Add a root `preview.png` screenshot of the panel, shown in the README and
+  detected by the Omarchy plugin marketplace as the listing preview.
+
 ## [0.1.2] - 2026-09-02
 
 ### Security
@@ -75,7 +90,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Pure parsing helpers in `Model.js` covered by Node unit tests
   (`node --test`).
 
-[Unreleased]: https://github.com/xavecorp/omartchy-openvpn3/compare/v0.1.2...HEAD
+[Unreleased]: https://github.com/xavecorp/omartchy-openvpn3/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/xavecorp/omartchy-openvpn3/compare/v0.1.2...v0.2.0
 [0.1.2]: https://github.com/xavecorp/omartchy-openvpn3/compare/v0.1.1...v0.1.2
 [0.1.1]: https://github.com/xavecorp/omartchy-openvpn3/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/xavecorp/omartchy-openvpn3/releases/tag/v0.1.0
