@@ -33,19 +33,27 @@ BarWidget {
 
     // Right click acts on the obvious target without opening the panel:
     // what is up, else what was up last, else the only profile there is.
+    // Tracked by config object path so a duplicate display name can never
+    // resolve the quick-toggle to the wrong profile.
     property string lastConnected: ""
 
-    function configExists(name) {
-        for (var i = 0; i < service.configs.length; i++) {
-            if (String(service.configs[i].name) === name) return true
-        }
-        return false
+    function configPathExists(configPath) {
+        return Model.rowByPath(service.configs, configPath) !== null
+    }
+
+    // The config object path of whatever session is currently active, resolved
+    // from the active session name through its row. "" when nothing is up.
+    function activeConfigPath() {
+        if (service.activeName === "") return ""
+        var row = Model.rowByName(service.configs, service.activeName)
+        return row ? String(row.configPath) : ""
     }
 
     function quickTarget() {
-        if (service.activeName !== "") return service.activeName
-        if (lastConnected !== "" && configExists(lastConnected)) return lastConnected
-        if (service.configs.length === 1) return String(service.configs[0].name)
+        var active = activeConfigPath()
+        if (active !== "") return active
+        if (lastConnected !== "" && configPathExists(lastConnected)) return lastConnected
+        if (service.configs.length === 1) return String(service.configs[0].configPath)
         return ""
     }
 
@@ -58,7 +66,8 @@ BarWidget {
     Connections {
         target: service
         function onActiveNameChanged() {
-            if (service.activeName !== "") root.lastConnected = service.activeName
+            var active = root.activeConfigPath()
+            if (active !== "") root.lastConnected = active
         }
     }
 

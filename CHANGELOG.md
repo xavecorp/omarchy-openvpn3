@@ -7,6 +7,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.1] - 2026-09-04
+
+### Security
+
+- Cap every CLI invocation's output at the OS level: the command now runs as
+  `openvpn3 … | head -c <ceiling>` under `timeout`, so at most the ceiling ever
+  reaches the collector. The byte limit bites *before* buffering rather than
+  truncating an already fully-buffered stream, closing a memory-exhaustion
+  vector from a runaway or hostile subprocess. `set -o pipefail` keeps the
+  openvpn3 exit status authoritative (never `head`'s). The wrapper is
+  injection-safe: a fixed shell script with every dynamic value passed as a
+  quoted positional parameter, over already path-validated arguments.
+- Reject any non-zero CLI exit outright, regardless of what text the command
+  emitted. A failed `configs-list`/`sessions-list`/session action can no longer
+  slip partial, stale, or hostile output into parsing or the last-good view
+  just because it printed something before failing.
+
+### Fixed
+
+- Key profile selection, optimistic state, and every UI action on the profile's
+  unique config object path instead of its display name. Two profiles that
+  share a name are now individually addressable — a toggle, the keyboard
+  cursor, the busy indicator, and the bar right-click quick-toggle all target
+  the exact profile the user acted on. Duplicate display names are preserved as
+  distinct rows keyed by path rather than being silently dropped.
+- Invalidate service state and reap every active process group on component
+  destruction (shell reload / widget removal). A new `Component.onDestruction`
+  latches the service dead, stops all timers, and terminates each running
+  process — SIGTERM to the `timeout` parent relays to its whole process group
+  (bash + openvpn3 + head), so no tunnel helper survives the widget.
+
 ## [0.2.0] - 2026-09-02
 
 ### Added

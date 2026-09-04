@@ -35,8 +35,11 @@ Item {
     property bool refreshing: false
 
     // Optimistic target state so a flipped switch reacts instantly instead of
-    // waiting for the next poll. Empty name means "just follow reality".
-    property string pendingName: ""
+    // waiting for the next poll. Keyed by the profile's unique config object
+    // path — never its display name — so the optimistic highlight and the
+    // in-flight action land on the exact row the user acted on, even when two
+    // profiles share a name. Empty path means "just follow reality".
+    property string pendingPath: ""
     property string pendingAction: ""  // "connect" | "disconnect"
 
     readonly property int refreshIntervalSec: intSetting("refreshIntervalSec", 5, 2, 60)
@@ -65,15 +68,37 @@ Item {
     // Cap on how much command output we retain, mirroring Model's own ceiling.
     readonly property int maxStoredChars: 262144
 
-    // Builds an argv that runs the trusted binary under a hard timeout. GNU
-    // `timeout` (invoked without --foreground) places the command in its own
-    // background process group and, on expiry, signals that whole group — so a
-    // hung openvpn3 and any children it spawned are killed together, not just
-    // the launcher. TERM first, then KILL two seconds later if it ignores TERM.
-    // When the path is not yet resolved the caller must not run the process.
+    // Builds an argv that runs the trusted binary under a hard timeout with its
+    // output hard-capped at the OS level. Two nested layers, each load-bearing:
+    //
+    //   1. GNU `timeout` is the DIRECT child of Quickshell. Invoked without
+    //      --foreground it runs its command in a fresh process group and, both
+    //      on expiry and on any signal it receives, signals that whole group —
+    //      so when the watchdog/onDestruction flips `running` to false (SIGTERM
+    //      to timeout) the entire tunnel process tree is reaped together, not
+    //      just the launcher. TERM first, then KILL two seconds later.
+    //
+    //   2. Inside, bash runs `<binary> <args> | head -c maxStoredChars`. The
+    //      cap is enforced by the kernel pipe + `head`: at most maxStoredChars
+    //      bytes ever leave the child, so StdioCollector can never buffer an
+    //      unbounded (or hostile, memory-exhausting) stream — the ceiling bites
+    //      *before* collection, not after. `set -o pipefail` makes the exit
+    //      status reflect the openvpn3 command, never head's, so a failing
+    //      command is still detected (and a runaway that trips head's early
+    //      exit surfaces as a non-zero SIGPIPE, i.e. also a failure).
+    //
+    // This is injection-safe by construction: the bash script is a fixed
+    // constant, and every dynamic value (binary path, args) is passed as a
+    // separate positional parameter referenced only through the quoted "$@",
+    // which the shell never re-parses for metacharacters. The args are anyway
+    // pre-validated D-Bus object paths (Model.validatePath) with no shell
+    // metacharacters. When the path is not yet resolved the caller must not run.
+    readonly property string capScript:
+        "set -o pipefail; \"$@\" | /usr/bin/head -c " + maxStoredChars
     function wrap(timeoutSec, args) {
         var argv = ["/usr/bin/timeout", "--kill-after=2", "--signal=TERM",
-                    String(timeoutSec), root.openvpn3Path]
+                    String(timeoutSec), "/usr/bin/bash", "-c", capScript,
+                    "openvpn3-wrap", root.openvpn3Path]
         for (var i = 0; i < args.length; i++) argv.push(args[i])
         return argv
     }
@@ -81,7 +106,7 @@ Item {
     // Derived overall state for the bar icon.
     readonly property string state: {
         if (!available) return "error"
-        if (pendingName !== "")
+        if (pendingPath !== "")
             return pendingAction === "connect" ? "connecting" : "disconnected"
         if (activeName === "") return "disconnected"
         var row = Model.rowByName(configs, activeName)
@@ -96,6 +121,11 @@ Item {
     // Latch set when a read watchdog fires, so a late onExited cannot resurrect
     // the aborted read chain or apply stale output.
     property bool _readAborted: false
+
+    // Latch set the moment the component starts tearing down. Every onExited
+    // handler bails on it so a process reaped during destruction can never
+    // touch (already half-gone) state, and no timer can re-arm a dead service.
+    property bool _destroyed: false
 
     function setting(name, fallback) {
         var value = settings ? settings[name] : undefined
@@ -119,6 +149,31 @@ Item {
     // ---- Executable resolution --------------------------------------------
 
     Component.onCompleted: resolveExecutable()
+
+    // Teardown: when the shell reloads or the widget is removed the component
+    // is destroyed, but any openvpn3 invocation it launched would otherwise
+    // outlive it. Invalidate all state first (so no late onExited or timer can
+    // touch a half-gone object), stop every timer, then reap every active
+    // process group. Flipping `running` to false sends SIGTERM to the DIRECT
+    // child — GNU `timeout` — which relays it to the whole process group it
+    // created (bash + openvpn3 + head), so the entire tree dies together.
+    Component.onDestruction: {
+        _destroyed = true
+        _readAborted = true
+        refreshing = false
+        clearPending()
+
+        refreshTimer.stop()
+        ramp.stop()
+        watchdog.stop()
+        errorHold.stop()
+        actionWatchdog.stop()
+
+        if (probeProcess.running) probeProcess.running = false
+        if (configsProcess.running) configsProcess.running = false
+        if (sessionsProcess.running) sessionsProcess.running = false
+        if (actionProcess.running) actionProcess.running = false
+    }
 
     // Probes the candidate list with `test -x` and pins the first hit. Until a
     // path is pinned the service reports unavailable and dispatches nothing.
@@ -162,6 +217,7 @@ Item {
     // A refresh reads configs first; its onExited chains into the sessions
     // read, and the sessions read merges both into `configs` rows.
     function refresh() {
+        if (_destroyed) return
         if (openvpn3Path === "") return
         if (configsProcess.running || sessionsProcess.running) return
         _configsOutput = ""
@@ -179,43 +235,48 @@ Item {
         activeName = Model.activeSessionName(sessionsResult)
 
         // Reality caught up with the optimistic state — stop overriding it.
-        if (pendingName !== "" && !actionProcess.running) clearPending()
+        if (pendingPath !== "" && !actionProcess.running) clearPending()
     }
 
     // ---- Writes (toggle) ---------------------------------------------------
     //
-    // Writes resolve the row's exact validated object path and act on that.
-    // If the path did not validate we refuse the action rather than fall back
-    // to an ambiguous name.
+    // Every write is addressed by the profile's unique config object path, not
+    // its display name. The path selects the exact row, and the row carries the
+    // exact validated D-Bus object paths the CLI acts on. If a required path did
+    // not validate we refuse the action rather than fall back to an ambiguous
+    // name — two profiles sharing a name can never be confused.
 
-    function connectConfig(name) {
-        if (openvpn3Path === "" || actionProcess.running || name === "") return
-        var configPath = Model.configPathForName(configs, name)
-        if (configPath === "") {
+    function connectConfig(configPath) {
+        if (openvpn3Path === "" || actionProcess.running || configPath === "")
+            return
+        var row = Model.rowByPath(configs, configPath)
+        if (!row || row.configPath === "") {
             root.lastError = "Cannot start: unknown configuration path"
             errorHold.restart()
             return
         }
-        pendingName = name
+        pendingPath = row.configPath
         pendingAction = "connect"
         lastError = ""
         _actionOutput = ""
         actionProcess.command = wrap(actionTimeoutSec,
-            ["session-start", "--config-path", configPath])
+            ["session-start", "--config-path", row.configPath])
         actionProcess.running = true
         ramp.restart()
         if (!actionWatchdog.running) actionWatchdog.restart()
     }
 
-    function disconnectConfig(name) {
-        if (openvpn3Path === "" || actionProcess.running || name === "") return
-        var sessionPath = Model.sessionPathForName(configs, name)
+    function disconnectConfig(configPath) {
+        if (openvpn3Path === "" || actionProcess.running || configPath === "")
+            return
+        var row = Model.rowByPath(configs, configPath)
+        var sessionPath = row ? row.sessionPath : ""
         if (sessionPath === "") {
             // No running session to act on; refresh reality instead of guessing.
             root.refresh()
             return
         }
-        pendingName = name
+        pendingPath = configPath
         pendingAction = "disconnect"
         lastError = ""
         _actionOutput = ""
@@ -227,29 +288,39 @@ Item {
     }
 
     // The single toggle entry point: connect a disconnected profile, or
-    // disconnect a connected/connecting one.
-    function toggleConfig(name) {
-        var current = displayState(name)
+    // disconnect a connected/connecting one. Addressed by config object path.
+    function toggleConfig(configPath) {
+        var current = displayState(configPath)
         if (current === "connected" || current === "connecting")
-            disconnectConfig(name)
+            disconnectConfig(configPath)
         else
-            connectConfig(name)
+            connectConfig(configPath)
     }
 
-    // What the UI should draw for one profile, optimism included.
-    function displayState(name) {
-        if (pendingName === name)
+    // Disconnects whatever session is currently active (the `d` shortcut and
+    // the bar quick-toggle). Resolves the active session's row so it acts on an
+    // exact object path rather than the raw name.
+    function disconnectActive() {
+        if (activeName === "") return
+        var row = Model.rowByName(configs, activeName)
+        if (row) disconnectConfig(row.configPath)
+    }
+
+    // What the UI should draw for one profile, optimism included. Keyed by the
+    // profile's config object path.
+    function displayState(configPath) {
+        if (pendingPath === configPath && configPath !== "")
             return pendingAction === "connect" ? "connecting" : "disconnected"
-        var row = Model.rowByName(configs, name)
+        var row = Model.rowByPath(configs, configPath)
         return row ? row.state : "disconnected"
     }
 
-    function isPending(name) {
-        return pendingName === name
+    function isPending(configPath) {
+        return configPath !== "" && pendingPath === configPath
     }
 
     function clearPending() {
-        pendingName = ""
+        pendingPath = ""
         pendingAction = ""
     }
 
@@ -304,8 +375,9 @@ Item {
     }
 
     // session-start can block on a slow server; without this a hang would
-    // leave busy/pendingName stuck until the next successful poll. Killing the
-    // process ends the whole session group thanks to the setsid+timeout wrap.
+    // leave busy/pendingPath stuck until the next successful poll. Flipping
+    // running to false SIGTERMs `timeout`, which reaps the whole process group
+    // (bash + openvpn3 + head), ending the stuck session attempt cleanly.
     Timer {
         id: actionWatchdog
         interval: 45000
@@ -327,17 +399,20 @@ Item {
         stdout: StdioCollector { id: configsOut; waitForEnd: true }
         stderr: StdioCollector { id: configsErr; waitForEnd: true }
         onExited: function (exitCode) {
+            // The component is tearing down: the process was reaped by
+            // onDestruction, not a real read. Touch nothing.
+            if (root._destroyed) return
             // If the watchdog already aborted this read, do not chain the
             // sessions process or touch state — the cycle is over.
             if (root._readAborted) return
 
             root._configsOutput = root.boundStored(configsOut.text)
-            var succeeded = exitCode === 0
 
-            // Only advance the chain on a clean read. A failed configs read
-            // must not feed parsing or trigger the sessions read; report it
-            // and stop the cycle so stale/garbage output is never applied.
-            if (!succeeded && root._configsOutput === "") {
+            // Reject any non-zero exit outright, regardless of what text the
+            // command emitted. A failed configs read must never feed parsing or
+            // trigger the sessions read: partial, stale or hostile output on a
+            // failing command is exactly what we must not apply.
+            if (exitCode !== 0) {
                 watchdog.stop()
                 root.refreshing = false
                 root.available = false
@@ -360,16 +435,17 @@ Item {
         stdout: StdioCollector { id: sessionsOut; waitForEnd: true }
         stderr: StdioCollector { id: sessionsErr; waitForEnd: true }
         onExited: function (exitCode) {
+            if (root._destroyed) return
             if (root._readAborted) return
 
             watchdog.stop()
             root.refreshing = false
             root._sessionsOutput = root.boundStored(sessionsOut.text)
 
-            // Apply the merged reads only on a successful sessions read. On
-            // failure keep the last good view rather than wiping rows with a
-            // partial/garbage listing.
-            if (exitCode !== 0 && root._sessionsOutput === "") {
+            // Apply the merged reads only on a clean exit. Any non-zero exit is
+            // rejected outright, whatever text was emitted, so a partial or
+            // hostile listing never wipes or corrupts the last good view.
+            if (exitCode !== 0) {
                 root.lastError = "openvpn3 sessions-list failed"
                 return
             }
@@ -384,6 +460,7 @@ Item {
         stdout: StdioCollector { id: actionOut; waitForEnd: true }
         stderr: StdioCollector { id: actionErr; waitForEnd: true }
         onExited: function (exitCode) {
+            if (root._destroyed) return
             actionWatchdog.stop()
             root._actionOutput = root.boundStored(
                 String(actionOut.text || "") + "\n" + String(actionErr.text || ""))

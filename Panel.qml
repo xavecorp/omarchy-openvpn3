@@ -88,16 +88,18 @@ Panel {
     function activateCursor() {
         if (configs.length === 0) return
         clampCursor()
-        root.toggleRow(String(configs[cursorIndex].name))
+        root.toggleRow(String(configs[cursorIndex].configPath))
     }
 
-    function toggleRow(name) {
+    // Toggle a profile addressed by its unique config object path, never its
+    // display name — two profiles sharing a name stay individually targetable.
+    function toggleRow(configPath) {
         if (!service) return
-        var row = Model.rowByName(configs, name)
+        var row = Model.rowByPath(configs, configPath)
         if (!row) return
         // A pending row needs no guard: Service's connectConfig/disconnectConfig
         // already no-op while an action is in flight.
-        service.toggleConfig(name)
+        service.toggleConfig(configPath)
     }
 
     onOpenedChanged: if (opened && service) service.refresh()
@@ -133,10 +135,7 @@ Panel {
             onTextKey: function (t) {
                 if (!root.service) return
                 if (t === "r" || t === "R") root.service.refresh()
-                else if (t === "d" || t === "D") {
-                    if (root.service.activeName !== "")
-                        root.service.disconnectConfig(root.service.activeName)
-                }
+                else if (t === "d" || t === "D") root.service.disconnectActive()
             }
 
             ColumnLayout {
@@ -247,7 +246,7 @@ Panel {
                         required property int index
 
                         readonly property string rowState: root.service
-                            ? root.service.displayState(modelData.name)
+                            ? root.service.displayState(modelData.configPath)
                             : "disconnected"
                         readonly property bool underCursor:
                             root.cursorActive && root.cursorIndex === index
@@ -306,10 +305,10 @@ Panel {
 
                             ToggleSwitch {
                                 checked: card.rowState === "connected" || card.rowState === "connecting"
-                                busy: root.service ? root.service.isPending(card.modelData.name) : false
+                                busy: root.service ? root.service.isPending(card.modelData.configPath) : false
                                 hasCursor: card.underCursor
                                 foreground: root.foreground
-                                onToggled: root.toggleRow(String(card.modelData.name))
+                                onToggled: root.toggleRow(String(card.modelData.configPath))
                             }
                         }
                     }

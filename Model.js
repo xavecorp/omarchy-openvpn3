@@ -112,16 +112,21 @@ function parseConfigsListJson(raw) {
     }
 
     var configs = [];
-    var seen = {};
+    var seenPath = {};
     var keys = Object.keys(parsed);
     for (var i = 0; i < keys.length; i++) {
         if (configs.length >= MAX_RECORDS) break;
         var path = validatePath(keys[i], CONFIG_PATH_PREFIX);
         if (path === "") continue;
+        // Dedup on the object path — the profile's stable, unique identity —
+        // never on the display name. Two profiles are free to share a name;
+        // keying anything on the name would let one target or shadow the
+        // other, so distinct paths must yield distinct rows.
+        if (seenPath[path] === true) continue;
         var entry = parsed[keys[i]];
         var name = clip(entry && entry.name ? entry.name : "", MAX_NAME_LEN);
-        if (name === "" || seen[name] === true) continue;
-        seen[name] = true;
+        if (name === "") continue;
+        seenPath[path] = true;
         configs.push({ name: name, path: path });
     }
 
@@ -391,6 +396,24 @@ function rowByName(rows, name) {
     return null;
 }
 
+// Resolves a row by its config object path — the stable, unique identity used
+// by every selection / optimistic-state / toggle path in the UI. Unlike
+// rowByName it can never be ambiguous, so two profiles sharing a display name
+// stay individually addressable. An empty query never matches (pathless rows
+// are not a selectable identity). Returns null when no row matches.
+function rowByPath(rows, configPath) {
+    var list = rows instanceof Array ? rows : [];
+    if (typeof configPath !== "string" || configPath === "") {
+        return null;
+    }
+    for (var i = 0; i < list.length; i++) {
+        if (list[i].configPath === configPath) {
+            return list[i];
+        }
+    }
+    return null;
+}
+
 // Human label for a row state.
 function stateLabel(state) {
     if (state === "connected") {
@@ -429,6 +452,15 @@ function sessionPathForName(rows, name) {
     return row && typeof row.sessionPath === "string" ? row.sessionPath : "";
 }
 
+// Resolves the validated session object path for the row whose config object
+// path matches — used to disconnect an exact running session by its own unique
+// id, resolved from the profile's unique id rather than an ambiguous name.
+// Returns "" when there is no running session or its path did not validate.
+function sessionPathForConfigPath(rows, configPath) {
+    var row = rowByPath(rows, configPath);
+    return row && typeof row.sessionPath === "string" ? row.sessionPath : "";
+}
+
 // Clips arbitrary error text (e.g. a CLI stderr line) for safe, bounded display.
 function clipError(value) {
     return clip(value, MAX_ERROR_LEN);
@@ -447,10 +479,12 @@ if (typeof module !== "undefined") {
         buildRows: buildRows,
         activeSessionName: activeSessionName,
         rowByName: rowByName,
+        rowByPath: rowByPath,
         stateLabel: stateLabel,
         heroText: heroText,
         configPathForName: configPathForName,
         sessionPathForName: sessionPathForName,
+        sessionPathForConfigPath: sessionPathForConfigPath,
         validatePath: validatePath,
         clip: clip,
         clipError: clipError,
