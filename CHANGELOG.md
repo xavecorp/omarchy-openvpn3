@@ -26,6 +26,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `Style.cornerRadius` rather than arbitrary pixel values, fixing the padding
   and margin inconsistencies. The separator rule reuses the shared
   `PanelSeparator` component.
+- Stop double-padding the panel body. The `KeyboardPanel` card already insets
+  its content by `padding` on every side; the column also carried
+  `anchors.margins`, stacking a second inset that made the left/right/top gaps
+  oversized while the bottom was clipped. The column now anchors top/left/right
+  only and lets its `implicitHeight` drive the card height, so all four sides
+  are padded symmetrically by the card. The header mark is sized to the title's
+  display height so it no longer looks shrunken next to the title.
 
 ## [0.2.1] - 2026-09-04
 

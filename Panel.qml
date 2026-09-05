@@ -140,8 +140,16 @@ Panel {
 
             ColumnLayout {
                 id: column
-                anchors.fill: parent
-                anchors.margins: Style.spacing.panelPadding
+                // The KeyboardPanel card already insets its content by
+                // `padding` on every side (see contentHolder in
+                // KeyboardPanel.qml). Adding anchors.margins here stacked a
+                // second inset on top — that was the "huge left/right/top"
+                // gap. Anchor to top/left/right only (no margins) and let the
+                // column's implicitHeight drive contentHeight so the bottom is
+                // padded symmetrically by the card instead of being clipped.
+                anchors.top: parent.top
+                anchors.left: parent.left
+                anchors.right: parent.right
                 spacing: Style.spacing.panelGap
 
                 // ---- 1. Header: plugin icon + title ------------------------
@@ -151,8 +159,11 @@ Panel {
                     spacing: Style.spacing.controlGap
 
                     Item {
-                        implicitWidth: Style.font.heading
-                        implicitHeight: Style.font.heading
+                        // Match the title's cap height so the mark reads as
+                        // its sibling rather than a shrunken afterthought. The
+                        // SVG is square, so the slot is square at display size.
+                        implicitWidth: Style.font.display
+                        implicitHeight: Style.font.display
 
                         Image {
                             id: headerIcon
