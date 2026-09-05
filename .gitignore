@@ -10,3 +10,6 @@ node_modules/
 
 # Local, throwaway QML preview harness (not part of the plugin)
 preview/
+
+# Transient per-session workflow state (agents, specs and steering ARE versioned)
+.kiro/memory/
