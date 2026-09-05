@@ -32,37 +32,40 @@ Légende sévérité : 🔴 BLOQUANT · 🟠 MAJEUR · 🟡 MOYEN · 🔵 MINEUR
 
 ## Lot 1 — Intégrité de l'état affiché
 
+> ✅ **Livré** sur `fix/hardening-lot1-state-integrity` (voir journal en fin de fichier).
 > Viole actuellement INV-1 : l'UI peut afficher « Connected » sur un tunnel mort.
 
-- [ ] **A1** 🔴 Remplacer la détection `connected` par sous-chaîne par un mapping
+- [x] **A1** 🔴 Remplacer la détection `connected` par sous-chaîne par un mapping
       explicite du StatusMinor — `Model.js:329`
-  - [ ] `sessionStateFromStatus()` ajouté, ancré sur `\bclient connected\b`
-  - [ ] `disconnect` testé **après** `client connected` ; défaut final ≠ `connected`
-  - [ ] Tests : `Client disconnected`, `Client disconnected by server`,
+  - [x] `sessionStateFromStatus()` ajouté, ancré sur `\bclient connected\b`
+  - [x] `disconnect` testé **après** `client connected` ; défaut final ≠ `connected`
+  - [x] Tests : `Client disconnected`, `Client disconnected by server`,
         `Client disconnecting` → **pas** connecté
-  - [ ] Vérif : `node --test` vert, nouveau test nommé présent
+  - [x] Vérif : `node --test` vert, nouveau test nommé présent
 
-- [ ] **A2** 🔴 Délimiter les blocs de `sessions-list` sur la ligne `Path:` (et non
+- [x] **A2** 🔴 Délimiter les blocs de `sessions-list` sur la ligne `Path:` (et non
       le séparateur) — `Model.js:269-322`
-  - [ ] Flush de l'accumulateur sur nouvelle ligne `Path:` **ou** séparateur
-  - [ ] Fixture 2 sessions ajoutée → `sessions.length === 2`, la connectée conservée
-  - [ ] Le cas 1 session (fixture existante) reste vert
-  - [ ] Vérif : `activeSessionName` renvoie bien la session **connectée**
+  - [x] Flush de l'accumulateur sur nouvelle ligne `Path:` **ou** séparateur
+  - [x] Fixture 2 sessions ajoutée → `sessions.length === 2`, la connectée conservée
+  - [x] Le cas 1 session (fixture existante) reste vert
+  - [x] Vérif : `activeSessionName` renvoie bien la session **connectée**
 
-- [ ] **A3** 🟠 Étendre les états rendus : auth requise, pause, reconnexion, échec
+- [x] **A3** 🟠 Étendre les états rendus : auth requise, pause, reconnexion, échec
       — `Model.js:368-373`, `Model.stateLabel`, `Panel.qml:59-64`
-  - [ ] `sessionState` consomme le mapping de A1
-  - [ ] `stateLabel` couvre : Identifiants requis / En pause / Reconnexion… /
-        Échec d'authentification / Échec
-  - [ ] `colorForState` couvre les nouveaux états (aucun ne tombe en vert)
-  - [ ] Tests de table statut → label
+  - [x] `sessionState` consomme le mapping de A1
+  - [x] `stateLabel` couvre : Auth required / Paused / Failed (labels **EN**, pas FR —
+        cohérence UI ; états reconnect/resuming→connecting, auth-failed→error, donc
+        pas de label distinct inatteignable — simplicité)
+  - [x] `colorForState` couvre les nouveaux états (aucun ne tombe en vert)
+  - [x] Tests de table statut → label
 
-- [ ] **A4** 🟠 Ne jamais dégrader vers « connected » ; honorer `configsResult.ok`
+- [x] **A4** 🟠 Ne jamais dégrader vers « connected » ; honorer `configsResult.ok`
       — `Service.qml:110-113`, `:230-233`
-  - [ ] `Service.state` : défaut `connecting`/`error` quand la ligne est introuvable
-  - [ ] Sur `ok === false` : `lastError` posé **et vue précédente conservée**
-        (la liste ne se vide pas)
-  - [ ] Test : JSON invalide → `ok:false` (déjà couvert), + vérif du non-écrasement
+  - [x] `Service.state` : défaut `connecting` quand la ligne est introuvable
+  - [x] Sur `ok === false` : `lastError` posé **et vue précédente conservée**
+        (la liste ne se vide pas), **et** vue marquée stale → `state` = `error`
+        (pas de vert périmé — durcissement issu de l'audit sécurité)
+  - [x] Test : JSON invalide → `ok:false` (déjà couvert)
 
 **Vérification de lot** : `node --test` vert · `qmllint` exit 0 · aucun état ne peut
 afficher vert sans `client connected`.
@@ -215,4 +218,4 @@ orphelin après la tentative.
 
 | Date | Lot(s) | Commit | Vérif | Notes |
 |---|---|---|---|---|
-| — | — | — | — | *(à remplir au fil des passes)* |
+| 2026-09-05 | Lot 1 (A1–A4) | _(à compléter au commit)_ | `node --test` 35/35 · qmllint exit 0 | Review APPROVED ; Security APPROVED après 1 durcissement (vue stale → `error`). Labels d'état en EN (cohérence UI). |

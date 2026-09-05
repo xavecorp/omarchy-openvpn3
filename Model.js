@@ -262,10 +262,15 @@ function nameFromRecord(recordLines) {
 
 // Parses `openvpn3 sessions-list`.
 //
-// Each session is a labelled block delimited by separators. We collect the
-// "Config name" and "Status" fields for every block.
+// Each session is a labelled block. The CLI prints a separator rule only at the
+// very top and bottom of the whole listing — NOT between every block — so
+// splitting on separators alone collapses several sessions into one and can
+// drop the connected one. Every block instead begins with exactly one `Path:`
+// line, so we flush the current accumulator whenever a new path line arrives
+// (or on a separator). This is robust to both layouts: separators between
+// blocks and a blank line between blocks both yield the correct session count.
 //
-// Returns { ok, sessions: [{ name, path, status, connected }], error }.
+// Returns { ok, sessions: [{ name, path, status, state, connected }], error }.
 function parseSessionsList(raw) {
     var text = String(raw || "").trim();
     if (text === "" || /no sessions/i.test(text)) {
@@ -276,23 +281,34 @@ function parseSessionsList(raw) {
     var sessions = [];
     var current = null;
 
+    function flush() {
+        if (current && current.name !== "") {
+            if (sessions.length < MAX_RECORDS) sessions.push(finalizeSession(current));
+        }
+        current = null;
+    }
+
     for (var i = 0; i < lines.length; i++) {
-        var trimmed = lines[i].trim();
-        if (isSeparator(lines[i])) {
-            if (current && current.name !== "") {
-                if (sessions.length < MAX_RECORDS) sessions.push(finalizeSession(current));
-            }
-            current = { name: "", path: "", status: "" };
+        var line = lines[i];
+        var trimmed = line.trim();
+
+        if (isSeparator(line)) {
+            flush();
             continue;
+        }
+
+        // A new session path line closes the previous block (if it already
+        // gathered anything) before starting a fresh accumulator.
+        var isPathLine = trimmed.indexOf(SESSION_PATH_PREFIX) !== -1;
+        if (isPathLine && current !== null && (current.path !== "" || current.name !== "" || current.status !== "")) {
+            flush();
         }
         if (current === null) {
             current = { name: "", path: "", status: "" };
         }
         assignSessionField(current, trimmed);
     }
-    if (current && current.name !== "") {
-        if (sessions.length < MAX_RECORDS) sessions.push(finalizeSession(current));
-    }
+    flush();
 
     return { ok: true, sessions: sessions, error: "" };
 }
@@ -320,20 +336,51 @@ function assignSessionField(session, trimmed) {
     }
 }
 
-// A session counts as connected once its status line reports "connected".
+// Maps an openvpn3 StatusMinor line to a UI state. The order matters: a
+// substring test for "connected" is a bug because "disconnected" contains it,
+// so the "client connected" case is anchored (\bclient connected\b) and tested
+// BEFORE the "disconnect" case. Anything unrecognised defaults to "connecting"
+// (never "connected"): the widget must never claim protection it cannot prove.
+//
+// Real StatusMinor labels this maps (see `strings /usr/bin/openvpn3`):
+//   Client connected                    -> connected
+//   Configuration requires user input   -> auth
+//   Authentication failed / Client authentication failed -> error
+//   Client connection failed / exception / process exited / Connection timeout -> error
+//   Client connection paused            -> paused
+//   Client reconnect / connection resuming -> connecting
+//   Client disconnected / disconnected by server / disconnecting -> disconnected
+function sessionStateFromStatus(status) {
+    var s = String(status || "").toLowerCase();
+    if (/\bclient connected\b/.test(s)) return "connected";
+    if (/requires user input/.test(s)) return "auth";
+    if (/authentication failed/.test(s)) return "error";
+    if (/(connection failed|exception|process exited|timeout)/.test(s)) return "error";
+    if (/paus/.test(s)) return "paused";
+    if (/(reconnect|resuming)/.test(s)) return "connecting";
+    if (/disconnect/.test(s)) return "disconnected";
+    return "connecting";
+}
+
+// Resolves a session's state from its status line and exposes it as `state`.
+// `connected` is kept as a boolean derived strictly from `state === "connected"`
+// so callers that only care about "is the tunnel really up" stay simple and
+// can never be fooled by a substring match.
 function finalizeSession(session) {
+    var state = sessionStateFromStatus(session.status);
     return {
         name: session.name,
         path: session.path,
         status: session.status,
-        connected: /connected/i.test(session.status),
+        state: state,
+        connected: state === "connected",
     };
 }
 
 // Merges configs and sessions into the rows the panel renders.
 //
 // Returns [{ name, configPath, sessionPath, state }] where state is one of:
-//   "connected" | "connecting" | "disconnected".
+//   "connected" | "connecting" | "auth" | "paused" | "error" | "disconnected".
 //
 // Both paths are already validated D-Bus object paths (or "") so that state
 // changes can target an exact object ID instead of an ambiguous name.
@@ -365,11 +412,16 @@ function sessionByName(sessions, name) {
     return null;
 }
 
+// Returns the resolved state of a session (from finalizeSession), or
+// "disconnected" when there is no session at all. Never re-derives the state
+// from a substring test — it consumes the mapping done in finalizeSession.
 function sessionState(session) {
     if (!session) {
         return "disconnected";
     }
-    return session.connected ? "connected" : "connecting";
+    return typeof session.state === "string" && session.state !== ""
+        ? session.state
+        : "connecting";
 }
 
 // The name of the first connected session, else "".
@@ -414,13 +466,20 @@ function rowByPath(rows, configPath) {
     return null;
 }
 
-// Human label for a row state.
+// Human label for a row state. Labels are English to match the existing UI
+// (Connected / Connecting… / Off).
 function stateLabel(state) {
     if (state === "connected") {
         return "Connected";
     }
     if (state === "connecting") {
         return "Connecting…";
+    }
+    if (state === "auth") {
+        return "Auth required";
+    }
+    if (state === "paused") {
+        return "Paused";
     }
     if (state === "error") {
         return "Failed";
@@ -476,6 +535,7 @@ if (typeof module !== "undefined") {
         parseConfigsList: parseConfigsList,
         parseConfigsListJson: parseConfigsListJson,
         parseSessionsList: parseSessionsList,
+        sessionStateFromStatus: sessionStateFromStatus,
         buildRows: buildRows,
         activeSessionName: activeSessionName,
         rowByName: rowByName,
