@@ -88,16 +88,18 @@ Panel {
     function activateCursor() {
         if (configs.length === 0) return
         clampCursor()
-        root.toggleRow(String(configs[cursorIndex].name))
+        root.toggleRow(String(configs[cursorIndex].configPath))
     }
 
-    function toggleRow(name) {
+    // Toggle a profile addressed by its unique config object path, never its
+    // display name — two profiles sharing a name stay individually targetable.
+    function toggleRow(configPath) {
         if (!service) return
-        var row = Model.rowByName(configs, name)
+        var row = Model.rowByPath(configs, configPath)
         if (!row) return
         // A pending row needs no guard: Service's connectConfig/disconnectConfig
         // already no-op while an action is in flight.
-        service.toggleConfig(name)
+        service.toggleConfig(configPath)
     }
 
     onOpenedChanged: if (opened && service) service.refresh()
@@ -133,27 +135,24 @@ Panel {
             onTextKey: function (t) {
                 if (!root.service) return
                 if (t === "r" || t === "R") root.service.refresh()
-                else if (t === "d" || t === "D") {
-                    if (root.service.activeName !== "")
-                        root.service.disconnectConfig(root.service.activeName)
-                }
+                else if (t === "d" || t === "D") root.service.disconnectActive()
             }
 
             ColumnLayout {
                 id: column
                 anchors.fill: parent
-                anchors.margins: Style.space(12)
-                spacing: Style.space(10)
+                anchors.margins: Style.spacing.panelPadding
+                spacing: Style.spacing.panelGap
 
                 // ---- 1. Header: plugin icon + title ------------------------
 
                 RowLayout {
                     Layout.fillWidth: true
-                    spacing: Style.space(8)
+                    spacing: Style.spacing.controlGap
 
                     Item {
-                        implicitWidth: Style.space(22)
-                        implicitHeight: Style.space(22)
+                        implicitWidth: Style.font.heading
+                        implicitHeight: Style.font.heading
 
                         Image {
                             id: headerIcon
@@ -181,7 +180,7 @@ Panel {
                         color: root.foreground
                         font.family: root.fontFamily
                         font.bold: true
-                        font.pixelSize: Math.round(Qt.application.font.pixelSize * 1.15)
+                        font.pixelSize: Style.font.title
                         elide: Text.ElideRight
                     }
                 }
@@ -190,12 +189,12 @@ Panel {
 
                 RowLayout {
                     Layout.fillWidth: true
-                    Layout.leftMargin: Style.space(2)
-                    spacing: Style.space(6)
+                    Layout.leftMargin: Style.spacing.xxs
+                    spacing: Style.spacing.md
 
                     Rectangle {
-                        implicitWidth: Style.space(9)
-                        implicitHeight: Style.space(9)
+                        implicitWidth: Style.spacing.lg
+                        implicitHeight: Style.spacing.lg
                         radius: width / 2
                         color: root.colorForState(root.overallState)
                         border.width: 1
@@ -208,19 +207,18 @@ Panel {
                         textFormat: Text.PlainText
                         color: root.available ? root.dim : root.urgent
                         font.family: root.fontFamily
-                        font.pixelSize: Math.round(Qt.application.font.pixelSize * 0.9)
+                        font.pixelSize: Style.font.caption
                         elide: Text.ElideRight
                     }
                 }
 
                 // ---- 3. Separator rule -------------------------------------
 
-                Rectangle {
+                PanelSeparator {
                     Layout.fillWidth: true
-                    Layout.topMargin: Style.space(2)
-                    Layout.bottomMargin: Style.space(2)
-                    implicitHeight: 1
-                    color: root.ruleColor
+                    Layout.topMargin: Style.spacing.xxs
+                    Layout.bottomMargin: Style.spacing.xxs
+                    foreground: root.foreground
                 }
 
                 // ---- 4. Available profiles ---------------------------------
@@ -232,6 +230,7 @@ Panel {
                     textFormat: Text.PlainText
                     color: root.dim
                     font.family: root.fontFamily
+                    font.pixelSize: Style.font.caption
                     wrapMode: Text.WordWrap
                 }
 
@@ -247,14 +246,14 @@ Panel {
                         required property int index
 
                         readonly property string rowState: root.service
-                            ? root.service.displayState(modelData.name)
+                            ? root.service.displayState(modelData.configPath)
                             : "disconnected"
                         readonly property bool underCursor:
                             root.cursorActive && root.cursorIndex === index
 
                         Layout.fillWidth: true
-                        implicitHeight: cardRow.implicitHeight + Style.space(14)
-                        radius: Style.space(6)
+                        implicitHeight: cardRow.implicitHeight + Style.spacing.xl
+                        radius: Style.cornerRadius
                         color: underCursor ? root.cardCursorColor : root.cardColor
                         border.width: 1
                         border.color: underCursor ? root.ruleColor : "transparent"
@@ -262,15 +261,15 @@ Panel {
                         RowLayout {
                             id: cardRow
                             anchors.fill: parent
-                            anchors.leftMargin: Style.space(10)
-                            anchors.rightMargin: Style.space(10)
-                            anchors.topMargin: Style.space(7)
-                            anchors.bottomMargin: Style.space(7)
-                            spacing: Style.space(8)
+                            anchors.leftMargin: Style.spacing.rowPaddingX
+                            anchors.rightMargin: Style.spacing.rowPaddingX
+                            anchors.topMargin: Style.spacing.md
+                            anchors.bottomMargin: Style.spacing.md
+                            spacing: Style.spacing.controlGap
 
                             Rectangle {
-                                implicitWidth: Style.space(8)
-                                implicitHeight: Style.space(8)
+                                implicitWidth: Style.spacing.lg
+                                implicitHeight: Style.spacing.lg
                                 radius: width / 2
                                 color: root.colorForState(card.rowState)
                                 border.width: 1
@@ -279,7 +278,7 @@ Panel {
 
                             ColumnLayout {
                                 Layout.fillWidth: true
-                                spacing: Style.space(1)
+                                spacing: Style.spacing.xxs
 
                                 Text {
                                     Layout.fillWidth: true
@@ -287,7 +286,8 @@ Panel {
                                     textFormat: Text.PlainText
                                     color: root.foreground
                                     font.family: root.fontFamily
-                                    font.pixelSize: Math.round(Qt.application.font.pixelSize * 0.9)
+                                    font.pixelSize: Style.font.body
+                                    font.bold: true
                                     elide: Text.ElideRight
                                 }
 
@@ -299,17 +299,17 @@ Panel {
                                         ? root.urgent
                                         : root.colorForState(card.rowState)
                                     font.family: root.fontFamily
-                                    font.pixelSize: Math.round(Qt.application.font.pixelSize * 0.75)
+                                    font.pixelSize: Style.font.caption
                                     elide: Text.ElideRight
                                 }
                             }
 
                             ToggleSwitch {
                                 checked: card.rowState === "connected" || card.rowState === "connecting"
-                                busy: root.service ? root.service.isPending(card.modelData.name) : false
+                                busy: root.service ? root.service.isPending(card.modelData.configPath) : false
                                 hasCursor: card.underCursor
                                 foreground: root.foreground
-                                onToggled: root.toggleRow(String(card.modelData.name))
+                                onToggled: root.toggleRow(String(card.modelData.configPath))
                             }
                         }
                     }
@@ -322,6 +322,7 @@ Panel {
                     textFormat: Text.PlainText
                     color: root.urgent
                     font.family: root.fontFamily
+                    font.pixelSize: Style.font.caption
                     wrapMode: Text.WordWrap
                 }
             }

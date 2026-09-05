@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "id": "xavecorp.openvpn3",
   "name": "Omarchy OpenVPN3",
-  "version": "0.2.0",
+  "version": "0.2.2",
   "author": "Xave Corp",
   "license": "MIT",
   "description": "Manage OpenVPN connections from the Omarchy bar, backed by the openvpn3 CLI.",

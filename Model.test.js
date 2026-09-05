@@ -287,3 +287,80 @@ test("parseConfigsListJson skips entries with an invalid object path", () => {
         ["real"]
     );
 });
+
+// ---- Identity is the object path, never the display name -------------------
+
+// Two distinct profiles that deliberately share the same display name. Only
+// their object paths tell them apart — exactly the case that must not collide.
+const configsDuplicateNames = `{
+    "/net/openvpn/v3/configuration/aaaaaaaa" : { "name" : "work" },
+    "/net/openvpn/v3/configuration/bbbbbbbb" : { "name" : "work" }
+}`;
+
+test("parseConfigsListJson keeps duplicate display names as distinct rows keyed by path", () => {
+    const result = Model.parseConfigsListJson(configsDuplicateNames);
+    assert.strictEqual(result.configs.length, 2);
+    assert.deepStrictEqual(
+        result.configs.map((c) => c.name),
+        ["work", "work"]
+    );
+    assert.deepStrictEqual(
+        result.configs.map((c) => c.path),
+        [
+            "/net/openvpn/v3/configuration/aaaaaaaa",
+            "/net/openvpn/v3/configuration/bbbbbbbb",
+        ]
+    );
+});
+
+test("parseConfigsListJson dedups on the object path, not the name", () => {
+    // The same object path appearing twice collapses to one row; two different
+    // paths with the same name do not.
+    const rows = Model.buildRows(
+        Model.parseConfigsListJson(configsDuplicateNames),
+        Model.parseSessionsList("")
+    );
+    assert.strictEqual(rows.length, 2);
+    assert.strictEqual(rows[0].configPath, "/net/openvpn/v3/configuration/aaaaaaaa");
+    assert.strictEqual(rows[1].configPath, "/net/openvpn/v3/configuration/bbbbbbbb");
+});
+
+test("rowByPath resolves the exact row even when display names collide", () => {
+    const rows = Model.buildRows(
+        Model.parseConfigsListJson(configsDuplicateNames),
+        Model.parseSessionsList("")
+    );
+    const a = Model.rowByPath(rows, "/net/openvpn/v3/configuration/aaaaaaaa");
+    const b = Model.rowByPath(rows, "/net/openvpn/v3/configuration/bbbbbbbb");
+    assert.ok(a && b);
+    assert.strictEqual(a.configPath, "/net/openvpn/v3/configuration/aaaaaaaa");
+    assert.strictEqual(b.configPath, "/net/openvpn/v3/configuration/bbbbbbbb");
+    assert.notStrictEqual(a, b);
+});
+
+test("rowByPath never matches an empty, non-string, or unknown path", () => {
+    const rows = Model.buildRows(
+        Model.parseConfigsListJson(configsJson),
+        Model.parseSessionsList("")
+    );
+    assert.strictEqual(Model.rowByPath(rows, ""), null);
+    assert.strictEqual(Model.rowByPath(rows, undefined), null);
+    assert.strictEqual(Model.rowByPath(rows, null), null);
+    assert.strictEqual(Model.rowByPath(rows, "/net/openvpn/v3/configuration/nope"), null);
+    assert.strictEqual(Model.rowByPath([], "/net/openvpn/v3/configuration/x"), null);
+});
+
+test("sessionPathForConfigPath resolves the running session by config path", () => {
+    const rows = Model.buildRows(
+        Model.parseConfigsListJson(configsJson),
+        Model.parseSessionsList(sessionsOutput)
+    );
+    const activePath = "/net/openvpn/v3/configuration/0c19147cx7ecex4846xbc1axb44fdb7e730c";
+    assert.strictEqual(
+        Model.sessionPathForConfigPath(rows, activePath),
+        "/net/openvpn/v3/sessions/d1b24861s3d90s4e7dsa445s8ae0a1c9b59b"
+    );
+    // Unknown / empty config paths resolve to no session, never a wrong one.
+    assert.strictEqual(Model.sessionPathForConfigPath(rows, "/net/openvpn/v3/configuration/other"), "");
+    assert.strictEqual(Model.sessionPathForConfigPath(rows, ""), "");
+});
