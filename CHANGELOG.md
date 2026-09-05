@@ -7,7 +7,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [0.2.2] - 2026-09-05
+## [0.2.3] - 2026-09-05
+
+### Fixed
+
+- Stop reporting a dead tunnel as connected. Session state is now derived from
+  an explicit map of the openvpn3 *StatusMinor* labels, anchored on
+  `\bclient connected\b`, instead of a substring test that also matched
+  `"disconnected"` and `"disconnected by server"`. The state now defaults to
+  `connecting` (never `connected`) for any status it does not recognise. (A1)
+- Parse every session from `sessions-list`, not just the last one. Blocks are
+  now delimited on their `Path:` line rather than on a separator, since the CLI
+  only prints a separator at the very top and bottom of the listing — with two
+  or more sessions the connected one was previously dropped and the wrong
+  session was reported active. (A2)
+- Surface the states the UI could not previously express: a session awaiting
+  credentials shows `Auth required`, a paused one `Paused`, and an
+  authentication/connection failure `Failed`, each with a non-green colour —
+  instead of an indefinite `Connecting…`. (A3)
+- Never let a failure degrade towards "connected". When the active session is
+  not yet reflected in a row the derived state falls back to `connecting`, and
+  when a `configs-list` read returns invalid data the previous view is kept but
+  flagged stale so the icon reports `error` rather than a leftover green until a
+  clean read returns. (A4)
 
 ### Fixed
 
