@@ -7,6 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.2] - 2026-09-05
+
+### Fixed
+
+- Paint the bar icon from the bar's `barForeground` colour instead of
+  `foreground`. On a transparent bar over a light wallpaper the shell resolves
+  `barForeground` to a contrast-appropriate colour, whereas `foreground` stays
+  the theme/popup text colour — using the latter rendered the icon light on a
+  dark bar. This matches every stock bar widget (WidgetButton, tailscale,
+  dropbox), which all source bar chrome from `barForeground`.
+- Align the panel with the shell's design tokens. Typography now uses the
+  `Style.font.*` scale (title / body / caption) driven by the system font size
+  (`omarchy display text size`) instead of hard-coded `Qt.application.font`
+  multipliers, so text is consistent with the rest of the shell and other
+  plugins. Spacing/padding now uses the semantic `Style.spacing.*` tokens
+  (`panelPadding`, `panelGap`, `rowPaddingX`, `controlGap`, …) and
+  `Style.cornerRadius` rather than arbitrary pixel values, fixing the padding
+  and margin inconsistencies. The separator rule reuses the shared
+  `PanelSeparator` component.
+
 ## [0.2.1] - 2026-09-04
 
 ### Security

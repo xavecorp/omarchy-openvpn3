@@ -13,7 +13,13 @@ BarWidget {
     moduleName: "xavecorp.openvpn3"
 
     readonly property string vpnState: service.state
-    readonly property color activeColor: bar ? bar.foreground : Color.foreground
+    // Bar chrome must paint with `barForeground`, not `foreground`. On a
+    // transparent bar over a light wallpaper the shell flips barForeground to a
+    // contrast-appropriate colour, while `foreground` stays the theme/popup
+    // text colour — using the latter is what made the icon render light on a
+    // dark bar. Every stock bar widget (WidgetButton, tailscale, dropbox)
+    // sources its icon from barForeground for exactly this reason.
+    readonly property color activeColor: bar ? bar.barForeground : Color.foreground
     readonly property color idleColor: Qt.darker(activeColor, 1.55)
     readonly property color urgentColor: bar ? bar.urgent : Color.urgent
 
