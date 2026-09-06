@@ -65,8 +65,29 @@ BarWidget {
 
     function quickToggle() {
         var target = quickTarget()
-        if (target === "") root.togglePanel()
-        else service.toggleConfig(target)
+        if (target === "") { root.togglePanel(); return }
+        var current = service.displayState(target)
+        if (current === "connected" || current === "connecting")
+            service.disconnectConfig(target)
+        else
+            startInTerminal(target)
+    }
+
+    // Start a session in a floating terminal (see Panel.startInTerminal for the
+    // rationale: session-start can prompt on stdin, which a headless Process
+    // cannot answer). Service.startArgv validates the path and returns [] to
+    // refuse; we only ever run a validated argv.
+    function startInTerminal(configPath) {
+        var argv = service.startArgv(configPath)
+        if (argv.length === 0) return
+        var cmd = ""
+        for (var i = 0; i < argv.length; i++)
+            cmd += (i > 0 ? " " : "") + Util.shellQuote(argv[i])
+        var launcher = "omarchy-launch-floating-terminal-with-presentation"
+        if (bar && typeof bar.run === "function")
+            bar.run(launcher + " " + Util.shellQuote(cmd))
+        else
+            Quickshell.execDetached([launcher, cmd])
     }
 
     Connections {

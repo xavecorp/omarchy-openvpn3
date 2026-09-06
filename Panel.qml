@@ -102,9 +102,39 @@ Panel {
         if (!service) return
         var row = Model.rowByPath(configs, configPath)
         if (!row) return
-        // A pending row needs no guard: Service's connectConfig/disconnectConfig
-        // already no-op while an action is in flight.
-        service.toggleConfig(configPath)
+        // A pending row needs no guard: Service's disconnectConfig already
+        // no-ops while an action is in flight, and startInTerminal resolves a
+        // fresh argv each call.
+        var current = service.displayState(configPath)
+        if (current === "connected" || current === "connecting")
+            service.disconnectConfig(configPath)
+        else
+            startInTerminal(configPath)
+    }
+
+    // Start a session in a floating terminal instead of a headless Process.
+    // session-start may prompt for credentials on stdin (user-locked / 2FA /
+    // static-challenge profiles); a headless Process has no stdin to offer and
+    // would loop forever on the prompt while leaving a stuck backend. The host
+    // shell's launcher runs the command in a real terminal where the user can
+    // answer. Service.startArgv does the path validation and refuses an
+    // unknown/empty path (returning []); we only run a validated argv.
+    function startInTerminal(configPath) {
+        if (!service) return
+        var argv = service.startArgv(configPath)
+        if (argv.length === 0) return
+        // Rebuild the command as a single quoted string for the launcher. Each
+        // argv element is shell-quoted independently so a validated D-Bus path
+        // can never break out of its token.
+        var cmd = ""
+        for (var i = 0; i < argv.length; i++)
+            cmd += (i > 0 ? " " : "") + Util.shellQuote(argv[i])
+        var launcher = "omarchy-launch-floating-terminal-with-presentation"
+        if (bar && typeof bar.run === "function")
+            bar.run(launcher + " " + Util.shellQuote(cmd))
+        else
+            Quickshell.execDetached([launcher, cmd])
+        root.close()
     }
 
     onOpenedChanged: if (opened && service) service.refresh()
