@@ -55,7 +55,17 @@ Panel {
     readonly property var configs: service ? service.configs : []
     readonly property bool available: service ? service.available : false
     readonly property string overallState: service ? service.state : "disconnected"
-    readonly property string activeName: service ? service.activeName : ""
+
+    // A19: the service now tracks the active session by its object PATH, not a
+    // display name. Re-derive the readable NAME from the matching row for
+    // display — never render the raw object path. rowBySessionPath returns null
+    // when the path is not yet merged or is ambiguous (two profiles share a
+    // name), in which case there is no single honest name to show.
+    readonly property string activeName: {
+        if (!service || service.activeSessionPath === "") return ""
+        var row = Model.rowBySessionPath(service.configs, service.activeSessionPath)
+        return row ? row.name : ""
+    }
 
     // Colour for a given state string, used by both the header status dot and
     // each row dot. Only `connected` is ever green — everything else must read
@@ -72,10 +82,16 @@ Panel {
     }
 
     // The status subtitle: the state label, plus the active config when up.
+    // When connected, append the active profile's readable NAME (re-derived
+    // from the row, never the raw object path) — but only when we have one:
+    // if activeName is empty (ambiguous duplicate names), fall back to the
+    // bare "Connected" label rather than a dangling separator.
     readonly property string statusLabel: {
         if (!available) return "openvpn3 not available"
         if (overallState === "connected")
-            return "Connected · " + Model.clipName(activeName)
+            return activeName === ""
+                ? "Connected"
+                : "Connected · " + Model.clipName(activeName)
         return Model.stateLabel(overallState)
     }
 
