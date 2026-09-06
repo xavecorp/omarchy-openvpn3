@@ -134,12 +134,14 @@ Panel {
     }
 
     // Start a session in a floating terminal instead of a headless Process.
-    // session-start may prompt for credentials on stdin (user-locked / 2FA /
-    // static-challenge profiles); a headless Process has no stdin to offer and
-    // would loop forever on the prompt while leaving a stuck backend. The host
-    // shell's launcher runs the command in a real terminal where the user can
-    // answer. Service.startArgv does the path validation and refuses an
-    // unknown/empty path (returning []); we only run a validated argv.
+    // session-start is interactive: it may prompt for credentials on stdin
+    // (user-locked / 2FA / static-challenge profiles) or open a browser for
+    // web/SAML/OIDC auth. A headless Process can host neither — it would loop
+    // on the stdin prompt (or leave the session awaiting external auth) with a
+    // stuck backend. The host shell's launcher runs the command in a real
+    // terminal where the user can authenticate. Service.startArgv does the path
+    // validation and refuses an unknown/empty path (returning []); we only run
+    // a validated argv.
     function startInTerminal(configPath) {
         if (!service) return
         var argv = service.startArgv(configPath)
