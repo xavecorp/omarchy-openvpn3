@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.1] - 2026-09-05
+
+### Fixed
+
+- Keep the profile list inside the popup card and make it scrollable. Beyond
+  roughly sixteen profiles the list used to be painted outside the card and
+  then off-screen, unreachable by mouse or keyboard, and the error text (the
+  last child) went with it. The body now lives in a clipped `Flickable` with an
+  as-needed scrollbar, a height cap, and `ensureVisible` so the keyboard cursor
+  always scrolls into view. (A10)
+- Give each profile card the 2px it was missing: the frame now reserves
+  `Style.spacing.md * 2` to match the row's top and bottom margins, so the row
+  content is no longer vertically compressed. (A11)
+
 ## [0.3.0] - 2026-09-05
 
 ### Fixed

@@ -1,4 +1,5 @@
 import QtQuick
+import QtQuick.Controls
 import QtQuick.Layouts
 import QtQuick.Effects
 import Quickshell
@@ -88,6 +89,10 @@ Panel {
         cursorActive = true
         cursorIndex += delta
         clampCursor()
+        // Keep the freshly-selected card inside the scroll viewport. The
+        // Flickable no-ops when everything already fits (contentHeight <=
+        // height), so short lists never scroll.
+        scrollArea.ensureVisible(cardRepeater.itemAt(cursorIndex))
     }
 
     function activateCursor() {
@@ -150,7 +155,7 @@ Panel {
         open: root.opened
         focusTarget: keyCatcher
         contentWidth: panel.fittedContentWidth(Style.space(360))
-        contentHeight: panel.fittedContentHeight(column.implicitHeight)
+        contentHeight: panel.fittedContentHeight(column.implicitHeight, Style.space(680))
 
         // PanelKeyCatcher maps keys to semantic signals: j/k and arrows become
         // moveRequested(dx, dy), enter/space become activateRequested, escape
@@ -173,203 +178,240 @@ Panel {
                 else if (t === "d" || t === "D") root.service.disconnectActive()
             }
 
-            ColumnLayout {
-                id: column
-                // The KeyboardPanel card already insets its content by
-                // `padding` on every side (see contentHolder in
-                // KeyboardPanel.qml). Adding anchors.margins here stacked a
-                // second inset on top — that was the "huge left/right/top"
-                // gap. Anchor to top/left/right only (no margins) and let the
-                // column's implicitHeight drive contentHeight so the bottom is
-                // padded symmetrically by the card instead of being clipped.
-                anchors.top: parent.top
-                anchors.left: parent.left
-                anchors.right: parent.right
-                spacing: Style.spacing.panelGap
+            // A long profile list must scroll: nothing on the
+            // BorderSurface → contentHolder → PanelKeyCatcher chain clips, so
+            // without this the cards below the card-height cap would paint
+            // outside the popup and then off-screen, unreachable. Mirrors the
+            // Docker plugin's scroll pattern.
+            Flickable {
+                id: scrollArea
+                anchors.fill: parent
+                contentWidth: width
+                contentHeight: column.implicitHeight
+                clip: true
+                boundsBehavior: Flickable.StopAtBounds
+                // Below the cap the whole list fits, so we must NOT capture
+                // gestures — otherwise a click meant for a toggle would be
+                // eaten by the Flickable. Only interactive once it overflows.
+                interactive: contentHeight > height
 
-                // ---- 1. Header: plugin icon + title ------------------------
-
-                RowLayout {
-                    Layout.fillWidth: true
-                    spacing: Style.spacing.controlGap
-
-                    Item {
-                        // Match the title's cap height so the mark reads as
-                        // its sibling rather than a shrunken afterthought. The
-                        // SVG is square, so the slot is square at display size.
-                        implicitWidth: Style.font.display
-                        implicitHeight: Style.font.display
-
-                        Image {
-                            id: headerIcon
-                            anchors.fill: parent
-                            fillMode: Image.PreserveAspectFit
-                            source: Qt.resolvedUrl("icon.svg")
-                            sourceSize.width: Math.round(width * Screen.devicePixelRatio)
-                            sourceSize.height: Math.round(height * Screen.devicePixelRatio)
-                            visible: false
-                            layer.enabled: true
-                        }
-
-                        MultiEffect {
-                            anchors.fill: headerIcon
-                            source: headerIcon
-                            colorization: 1.0
-                            colorizationColor: root.foreground
-                        }
-                    }
-
-                    Text {
-                        Layout.fillWidth: true
-                        text: "OpenVPN3"
-                        textFormat: Text.PlainText
-                        color: root.foreground
-                        font.family: root.fontFamily
-                        font.bold: true
-                        font.pixelSize: Style.font.title
-                        elide: Text.ElideRight
-                    }
+                // Scroll the given item's card fully into view. No-op while
+                // everything fits. Same exact maths as the Docker plugin.
+                function ensureVisible(item) {
+                    if (!item || contentHeight <= height) return
+                    var top = item.mapToItem(column, 0, 0).y
+                    var margin = Style.spacing.lg
+                    if (top - margin < contentY) contentY = Math.max(0, top - margin)
+                    else if (top + item.height + margin > contentY + height)
+                        contentY = Math.min(contentHeight - height, top + item.height + margin - height)
                 }
 
-                // ---- 2. Status subtitle: state dot + label -----------------
+                ScrollBar.vertical: ScrollBar { policy: ScrollBar.AsNeeded }
 
-                RowLayout {
-                    Layout.fillWidth: true
-                    Layout.leftMargin: Style.spacing.xxs
-                    spacing: Style.spacing.md
+                ColumnLayout {
+                    id: column
+                    // The KeyboardPanel card already insets its content by
+                    // `padding` on every side (see contentHolder in
+                    // KeyboardPanel.qml), and the Flickable fills that padded
+                    // area — so no anchors.margins here (that stacked a second
+                    // inset). Inside a Flickable a ColumnLayout's anchors would
+                    // bind to the contentItem and not pin the width, so set the
+                    // width explicitly to the viewport and let implicitHeight
+                    // be the sole driver of contentHeight (no binding loop:
+                    // width never depends on height). ColumnLayout is kept over
+                    // a plain Column so the existing Layout.* children need no
+                    // rewrite.
+                    width: scrollArea.width
+                    spacing: Style.spacing.panelGap
 
-                    Rectangle {
-                        implicitWidth: Style.spacing.lg
-                        implicitHeight: Style.spacing.lg
-                        radius: width / 2
-                        color: root.colorForState(root.overallState)
-                        border.width: 1
-                        border.color: Qt.rgba(0, 0, 0, 0.25)
+                    // ---- 1. Header: plugin icon + title ------------------------
+
+                    RowLayout {
+                        Layout.fillWidth: true
+                        spacing: Style.spacing.controlGap
+
+                        Item {
+                            // Match the title's cap height so the mark reads as
+                            // its sibling rather than a shrunken afterthought. The
+                            // SVG is square, so the slot is square at display size.
+                            implicitWidth: Style.font.display
+                            implicitHeight: Style.font.display
+
+                            Image {
+                                id: headerIcon
+                                anchors.fill: parent
+                                fillMode: Image.PreserveAspectFit
+                                source: Qt.resolvedUrl("icon.svg")
+                                sourceSize.width: Math.round(width * Screen.devicePixelRatio)
+                                sourceSize.height: Math.round(height * Screen.devicePixelRatio)
+                                visible: false
+                                layer.enabled: true
+                            }
+
+                            MultiEffect {
+                                anchors.fill: headerIcon
+                                source: headerIcon
+                                colorization: 1.0
+                                colorizationColor: root.foreground
+                            }
+                        }
+
+                        Text {
+                            Layout.fillWidth: true
+                            text: "OpenVPN3"
+                            textFormat: Text.PlainText
+                            color: root.foreground
+                            font.family: root.fontFamily
+                            font.bold: true
+                            font.pixelSize: Style.font.title
+                            elide: Text.ElideRight
+                        }
                     }
+
+                    // ---- 2. Status subtitle: state dot + label -----------------
+
+                    RowLayout {
+                        Layout.fillWidth: true
+                        Layout.leftMargin: Style.spacing.xxs
+                        spacing: Style.spacing.md
+
+                        Rectangle {
+                            implicitWidth: Style.spacing.lg
+                            implicitHeight: Style.spacing.lg
+                            radius: width / 2
+                            color: root.colorForState(root.overallState)
+                            border.width: 1
+                            border.color: Qt.rgba(0, 0, 0, 0.25)
+                        }
+
+                        Text {
+                            Layout.fillWidth: true
+                            text: root.statusLabel
+                            textFormat: Text.PlainText
+                            color: root.available ? root.dim : root.urgent
+                            font.family: root.fontFamily
+                            font.pixelSize: Style.font.caption
+                            elide: Text.ElideRight
+                        }
+                    }
+
+                    // ---- 3. Separator rule -------------------------------------
+
+                    PanelSeparator {
+                        Layout.fillWidth: true
+                        Layout.topMargin: Style.spacing.xxs
+                        Layout.bottomMargin: Style.spacing.xxs
+                        foreground: root.foreground
+                    }
+
+                    // ---- 4. Available profiles ---------------------------------
 
                     Text {
                         Layout.fillWidth: true
-                        text: root.statusLabel
+                        visible: root.configs.length === 0 && root.available
+                        text: "No configs — import one with:\nopenvpn3 config-import --config <file>.ovpn"
                         textFormat: Text.PlainText
-                        color: root.available ? root.dim : root.urgent
+                        color: root.dim
                         font.family: root.fontFamily
                         font.pixelSize: Style.font.caption
-                        elide: Text.ElideRight
+                        wrapMode: Text.WordWrap
                     }
-                }
 
-                // ---- 3. Separator rule -------------------------------------
+                    Repeater {
+                        id: cardRepeater
+                        model: root.configs
 
-                PanelSeparator {
-                    Layout.fillWidth: true
-                    Layout.topMargin: Style.spacing.xxs
-                    Layout.bottomMargin: Style.spacing.xxs
-                    foreground: root.foreground
-                }
+                        // Each profile is a framed card so rows read as discrete
+                        // units; the framed card highlights under the keyboard
+                        // cursor.
+                        Rectangle {
+                            id: card
+                            required property var modelData
+                            required property int index
 
-                // ---- 4. Available profiles ---------------------------------
+                            readonly property string rowState: root.service
+                                ? root.service.displayState(modelData.configPath)
+                                : "disconnected"
+                            readonly property bool underCursor:
+                                root.cursorActive && root.cursorIndex === index
 
-                Text {
-                    Layout.fillWidth: true
-                    visible: root.configs.length === 0 && root.available
-                    text: "No configs — import one with:\nopenvpn3 config-import --config <file>.ovpn"
-                    textFormat: Text.PlainText
-                    color: root.dim
-                    font.family: root.fontFamily
-                    font.pixelSize: Style.font.caption
-                    wrapMode: Text.WordWrap
-                }
+                            Layout.fillWidth: true
+                            // topMargin + bottomMargin below are both Style.spacing.md,
+                            // so the frame must add md*2 (=12) to fit the row without
+                            // compressing it — not xl (=10), which left it 2px short.
+                            implicitHeight: cardRow.implicitHeight + Style.spacing.md * 2
+                            radius: Style.cornerRadius
+                            color: underCursor ? root.cardCursorColor : root.cardColor
+                            border.width: 1
+                            border.color: underCursor ? root.ruleColor : "transparent"
 
-                Repeater {
-                    model: root.configs
+                            RowLayout {
+                                id: cardRow
+                                anchors.fill: parent
+                                anchors.leftMargin: Style.spacing.rowPaddingX
+                                anchors.rightMargin: Style.spacing.rowPaddingX
+                                anchors.topMargin: Style.spacing.md
+                                anchors.bottomMargin: Style.spacing.md
+                                spacing: Style.spacing.controlGap
 
-                    // Each profile is a framed card so rows read as discrete
-                    // units; the framed card highlights under the keyboard
-                    // cursor.
-                    Rectangle {
-                        id: card
-                        required property var modelData
-                        required property int index
-
-                        readonly property string rowState: root.service
-                            ? root.service.displayState(modelData.configPath)
-                            : "disconnected"
-                        readonly property bool underCursor:
-                            root.cursorActive && root.cursorIndex === index
-
-                        Layout.fillWidth: true
-                        implicitHeight: cardRow.implicitHeight + Style.spacing.xl
-                        radius: Style.cornerRadius
-                        color: underCursor ? root.cardCursorColor : root.cardColor
-                        border.width: 1
-                        border.color: underCursor ? root.ruleColor : "transparent"
-
-                        RowLayout {
-                            id: cardRow
-                            anchors.fill: parent
-                            anchors.leftMargin: Style.spacing.rowPaddingX
-                            anchors.rightMargin: Style.spacing.rowPaddingX
-                            anchors.topMargin: Style.spacing.md
-                            anchors.bottomMargin: Style.spacing.md
-                            spacing: Style.spacing.controlGap
-
-                            Rectangle {
-                                implicitWidth: Style.spacing.lg
-                                implicitHeight: Style.spacing.lg
-                                radius: width / 2
-                                color: root.colorForState(card.rowState)
-                                border.width: 1
-                                border.color: Qt.rgba(0, 0, 0, 0.25)
-                            }
-
-                            ColumnLayout {
-                                Layout.fillWidth: true
-                                spacing: Style.spacing.xxs
-
-                                Text {
-                                    Layout.fillWidth: true
-                                    text: Model.clipName(card.modelData.name)
-                                    textFormat: Text.PlainText
-                                    color: root.foreground
-                                    font.family: root.fontFamily
-                                    font.pixelSize: Style.font.body
-                                    font.bold: true
-                                    elide: Text.ElideRight
+                                Rectangle {
+                                    implicitWidth: Style.spacing.lg
+                                    implicitHeight: Style.spacing.lg
+                                    radius: width / 2
+                                    color: root.colorForState(card.rowState)
+                                    border.width: 1
+                                    border.color: Qt.rgba(0, 0, 0, 0.25)
                                 }
 
-                                Text {
+                                ColumnLayout {
                                     Layout.fillWidth: true
-                                    text: Model.stateLabel(card.rowState)
-                                    textFormat: Text.PlainText
-                                    color: card.rowState === "error"
-                                        ? root.urgent
-                                        : root.colorForState(card.rowState)
-                                    font.family: root.fontFamily
-                                    font.pixelSize: Style.font.caption
-                                    elide: Text.ElideRight
-                                }
-                            }
+                                    spacing: Style.spacing.xxs
 
-                            ToggleSwitch {
-                                checked: card.rowState === "connected" || card.rowState === "connecting"
-                                busy: root.service ? root.service.isPending(card.modelData.configPath) : false
-                                hasCursor: card.underCursor
-                                foreground: root.foreground
-                                onToggled: root.toggleRow(String(card.modelData.configPath))
+                                    Text {
+                                        Layout.fillWidth: true
+                                        text: Model.clipName(card.modelData.name)
+                                        textFormat: Text.PlainText
+                                        color: root.foreground
+                                        font.family: root.fontFamily
+                                        font.pixelSize: Style.font.body
+                                        font.bold: true
+                                        elide: Text.ElideRight
+                                    }
+
+                                    Text {
+                                        Layout.fillWidth: true
+                                        text: Model.stateLabel(card.rowState)
+                                        textFormat: Text.PlainText
+                                        color: card.rowState === "error"
+                                            ? root.urgent
+                                            : root.colorForState(card.rowState)
+                                        font.family: root.fontFamily
+                                        font.pixelSize: Style.font.caption
+                                        elide: Text.ElideRight
+                                    }
+                                }
+
+                                ToggleSwitch {
+                                    checked: card.rowState === "connected" || card.rowState === "connecting"
+                                    busy: root.service ? root.service.isPending(card.modelData.configPath) : false
+                                    hasCursor: card.underCursor
+                                    foreground: root.foreground
+                                    onToggled: root.toggleRow(String(card.modelData.configPath))
+                                }
                             }
                         }
                     }
-                }
 
-                Text {
-                    Layout.fillWidth: true
-                    visible: root.service && root.service.lastError !== ""
-                    text: root.service ? Model.clipError(root.service.lastError) : ""
-                    textFormat: Text.PlainText
-                    color: root.urgent
-                    font.family: root.fontFamily
-                    font.pixelSize: Style.font.caption
-                    wrapMode: Text.WordWrap
+                    Text {
+                        Layout.fillWidth: true
+                        visible: root.service && root.service.lastError !== ""
+                        text: root.service ? Model.clipError(root.service.lastError) : ""
+                        textFormat: Text.PlainText
+                        color: root.urgent
+                        font.family: root.fontFamily
+                        font.pixelSize: Style.font.caption
+                        wrapMode: Text.WordWrap
+                    }
                 }
             }
         }

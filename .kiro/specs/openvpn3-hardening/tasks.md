@@ -131,18 +131,18 @@ user-locked à confirmer par l'utilisateur (angle mort assumé — pas de shell 
 
 ## Lot 4 — Robustesse UI
 
-> Viole actuellement EX-4 au-delà de ~16 profils.
+> ✅ **Livré** sur `fix/hardening-lot4-ui-scroll` (voir journal). Corrige EX-4.
 
-- [ ] **A10** 🟠 Ajouter `Flickable` + clipping + scroll — `Panel.qml:118, 150-152, 76-80`
-  - [ ] `Flickable { clip: true; boundsBehavior: StopAtBounds;
-        interactive: contentHeight > height }` + `ScrollBar.vertical`
-  - [ ] `cap` passé à `fittedContentHeight` (patron Docker)
-  - [ ] `ensureVisible()` appelé depuis `moveCursor` (curseur clavier toujours visible)
-  - [ ] Test manuel : 30 profils → tout atteignable, rien peint hors carte, message
-        d'erreur toujours visible
+- [x] **A10** 🟠 Ajouter `Flickable` + clipping + scroll
+  - [x] `Flickable { clip: true; boundsBehavior: StopAtBounds;
+        interactive: contentHeight > height }` + `ScrollBar.vertical` (AsNeeded)
+  - [x] `cap` `Style.space(680)` passé à `fittedContentHeight` (patron Docker)
+  - [x] `ensureVisible()` appelé depuis `moveCursor` (curseur clavier visible)
+  - [x] `import QtQuick.Controls` ajouté (ScrollBar) ; ColumnLayout conservé avec
+        `width: scrollArea.width` (choix documenté, pas de binding loop — qml6 6s OK)
+  - [ ] ⏳ Test manuel 30 profils — **à faire par l'utilisateur** (rendu shell live)
 
-- [ ] **A11** 🔵 Corriger la hauteur de carte (2 px) — `Panel.qml:266`
-  - [ ] `cardRow.implicitHeight + Style.spacing.md * 2` (au lieu de `xl`)
+- [x] **A11** 🔵 Hauteur de carte : `cardRow.implicitHeight + Style.spacing.md * 2`
 
 ---
 
