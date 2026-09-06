@@ -7,7 +7,38 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [0.2.3] - 2026-09-05
+## [0.3.0] - 2026-09-05
+
+### Fixed
+
+- Never leave an orphaned `openvpn3` process behind. Command invocations are
+  wrapped with `timeout --signal=KILL` instead of `--signal=TERM`: a child that
+  ignores SIGTERM (which `session-start` does) previously survived the wrapper,
+  reparented and burning CPU until reboot. KILL to the process group cannot be
+  trapped or ignored. (A5)
+- Bound command output at the OS level for stderr too, not just stdout. Reads
+  run `… 2>/dev/null | head -c N` and the disconnect action runs `… 2>&1 | head
+  -c N`, so a noisy or hostile subprocess can no longer stream unbounded stderr
+  into the shell's memory. `2>&1` is deliberately never applied to
+  `configs-list --json`, whose stream must stay valid JSON. The unused stderr
+  collectors were removed. (A6)
+- Invalidate `probeProcess` on component destruction like the other processes,
+  so a probe result can no longer re-arm a half-destroyed service. (A7)
+- Re-arm the read watchdog at the start of each read rather than once for the
+  whole configs→sessions chain, so a slow-but-healthy pair of reads no longer
+  trips a false "openvpn3 stopped responding". (A8)
+
+### Changed
+
+- Start sessions in a floating terminal instead of a headless process. A
+  user-locked / 2FA / static-challenge profile prompts for credentials on
+  stdin; a headless process had no stdin to answer with, so it looped on the
+  prompt for 40s, surfaced a D-Bus path as the "error", and left a stuck
+  backend — the plugin's main use case was effectively broken. `session-start`
+  now runs through the host shell's floating-terminal launcher where the user
+  can authenticate; the connect/disconnect decision moved to the panel and bar
+  widget (which own `bar`), and `Service` only validates and hands back the
+  argv. A profile awaiting input reads `Auth required`. (A9)
 
 ### Fixed
 

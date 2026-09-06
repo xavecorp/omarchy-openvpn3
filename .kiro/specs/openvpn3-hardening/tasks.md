@@ -74,55 +74,58 @@ afficher vert sans `client connected`.
 
 ## Lot 2 — Intégrité système / processus
 
-> Viole actuellement NF-1 et NF-2 : orphelin à ~20 % CPU, stderr non borné.
+> ✅ **Livré** sur `fix/hardening-lot2-3-process-and-auth` (voir journal).
+> Corrige NF-1 et NF-2 : orphelin à ~20 % CPU, stderr non borné.
 
-- [ ] **A5** 🔴 Supprimer la fuite de processus sur `session-start`
-      — `Service.qml:26-31, 78-99, 98-104`
-  - [ ] Option retenue : `openvpn3 session-start --timeout SECS` (préférée, cf. A9)
-        **ou** `--signal=KILL` sur `timeout`
-  - [ ] PoC de non-régression : enfant `trap '' TERM` → **aucun survivant** après
-        expiration (ne pas tester avec `sleep`, il meurt sur TERM)
-  - [ ] `ps`/`pgrep` : aucun `openvpn3` orphelin après un échec de connexion
-  - [ ] Commentaires corrigés (→ A18)
+- [x] **A5** 🔴 Supprimer la fuite de processus sur `session-start`
+      — `Service.qml` wrap()
+  - [x] Retenu : `session-start` **délégué au terminal** (A9) → n'est plus lancé par
+        un Process ; le seul Process d'action restant (`session-manage --disconnect`)
+        passe par `wrap()` avec **`--signal=KILL`**
+  - [x] PoC enfant `trap '' TERM` sous `wrap()` `--signal=KILL` → **0 survivant**
+        après expiration (pendant : 3 process ; après : 0)
+  - [x] Commentaires corrigés (A18) — plus de promesse de reaping complet
 
-- [ ] **A6** 🟠 Borner stderr **in-band** — `Service.qml:96-97, 400, 436, 461, 465-467`
-  - [ ] `capScriptRead` = `2>/dev/null | head -c N` (lectures)
-  - [ ] `capScriptAction` = `2>&1 | head -c N` (action)
-  - [ ] ⚠️ **`2>&1` jamais appliqué à `configs-list --json`** (corromprait le JSON)
-  - [ ] `configsErr`/`sessionsErr` supprimés ; `_actionOutput = boundStored(actionOut.text)`
-  - [ ] PoC : flood stderr → RSS quickshell stable (attendu ≈ +0 Mo)
+- [x] **A6** 🟠 Borner stderr **in-band** — `Service.qml`
+  - [x] `capScriptRead` = `"$@" 2>/dev/null | head -c N` (lectures)
+  - [x] `capScriptAction` = `"$@" 2>&1 | head -c N` (disconnect)
+  - [x] ⚠️ `2>&1` **jamais** appliqué à `configs-list --json` (JSON préservé — PoC OK)
+  - [x] `configsErr`/`sessionsErr`/`actionErr` supprimés ; `_actionOutput` supprimé
+  - [x] PoC : flood combiné capé à N octets ; stderr de lecture jeté
 
-- [ ] **A7** 🟠 Garder `probeProcess` contre la destruction — `Service.qml:203-212, 185-194`
-  - [ ] `if (root._destroyed) return` dans `probeProcess.onExited`
-  - [ ] `if (root._destroyed) return` dans `probeNext()`
+- [x] **A7** 🟠 Garder `probeProcess` contre la destruction
+  - [x] `if (root._destroyed) return` dans `probeProcess.onExited`
+  - [x] `if (root._destroyed) return` dans `probeNext()`
 
-- [ ] **A8** 🟠 Recalibrer le watchdog de lecture — `Service.qml:65, 228, 357`
-  - [ ] Réarmement au démarrage de **chaque** Process (préféré) ou intervalle ≥ 27 s
-  - [ ] Plus de faux « openvpn3 stopped responding » quand chaque commande respecte
+- [x] **A8** 🟠 Recalibrer le watchdog de lecture
+  - [x] Réarmement au démarrage de **chaque** lecture (configs puis sessions)
+  - [x] Plus de faux « openvpn3 stopped responding » quand chaque commande respecte
         son propre plafond de 12 s
 
-**Vérification de lot** : PoC orphelin **et** PoC stderr rejoués · `node --test` vert.
+**Vérification de lot** : PoC orphelin (KILL) **et** PoC stderr rejoués · `node --test` 35/35.
 
 ---
 
 ## Lot 3 — Cas d'usage principal (profils user-locked / 2FA)
 
-> Viole actuellement EX-3. `testamento-profile-userlocked` = le cas d'usage réel.
+> ✅ **Livré** sur `fix/hardening-lot2-3-process-and-auth` (voir journal).
+> Corrige EX-3. `testamento-profile-userlocked` = le cas d'usage réel.
 
-- [ ] **A9** 🟠 Déléguer `session-start` au terminal flottant — `Service.qml:456-476`
-  - [ ] Patron du shell hôte réutilisé (`bar.run` +
-        `omarchy-launch-floating-terminal-with-presentation`, argument **quoté**)
-  - [ ] Statut `requires user input` → « Identifiants requis » + action
-        « Ouvrir un terminal » (plus de « Connecting… » infini)
-  - [ ] Plus de blocage de 40 s ; plus de `lastError` affichant un chemin D-Bus
-  - [ ] Nettoyage induit : `actionTimeoutSec`, branche 40 s, `_actionOutput`/`firstLine`
-        si devenus inutiles
-  - [ ] Décider du sort de `actionWatchdog` (**redevient utile** si `timeout` est
-        retiré de `session-start`) et le documenter
-  - [ ] Test manuel sur un profil demandant des identifiants
+- [x] **A9** 🟠 Déléguer `session-start` au terminal flottant
+  - [x] Patron du shell hôte réutilisé — **côté Panel/BarWidget** (qui ont `bar` ;
+        Service est headless) : `bar.run(launcher + " " + Util.shellQuote(cmd))`,
+        repli `Quickshell.execDetached`. Argv shell-quoté (double couche, PoC sûr)
+  - [x] Statut `requires user input` → `Auth required` (Lot 1), toggle → ouvre le terminal
+  - [x] Plus de blocage 40 s ; plus de `lastError` affichant un chemin D-Bus
+  - [x] Nettoyage induit : `Service.connectConfig`/`toggleConfig` supprimés,
+        `startArgv` (validation + argv) ajouté, décision connect/disconnect en UI,
+        `_actionOutput` supprimé, `actionTimeoutSec` 40→12 s, `Service.busy` (mort) supprimé
+  - [x] `actionWatchdog` conservé (backstop du disconnect), intervalle recalibré, documenté
+  - [ ] ⏳ Test manuel sur un profil demandant des identifiants — **à faire par l'utilisateur**
+        (nécessite un vrai profil user-locked et un rendu shell live)
 
-**Vérification de lot** : un profil user-locked se connecte réellement · aucun
-orphelin après la tentative.
+**Vérification de lot** : logique prouvée par PoC ; connexion réelle d'un profil
+user-locked à confirmer par l'utilisateur (angle mort assumé — pas de shell graphique ici).
 
 ---
 
@@ -218,4 +221,5 @@ orphelin après la tentative.
 
 | Date | Lot(s) | Commit | Vérif | Notes |
 |---|---|---|---|---|
-| 2026-09-05 | Lot 1 (A1–A4) | _(à compléter au commit)_ | `node --test` 35/35 · qmllint exit 0 | Review APPROVED ; Security APPROVED après 1 durcissement (vue stale → `error`). Labels d'état en EN (cohérence UI). |
+| 2026-09-05 | Lot 1 (A1–A4) | c22085d (PR #2, mergée) | `node --test` 35/35 · qmllint exit 0 | Review APPROVED ; Security APPROVED après 1 durcissement (vue stale → `error`). Labels EN. |
+| 2026-09-05 | Lot 2 (A5–A8) + Lot 3 (A9) | _(à compléter au commit)_ | 35/35 · qmllint exit 0 · PoC A5(KILL)/A6(caps) | A9 : session-start délégué au terminal (Service headless → logique en UI). Review APPROVED après retrait de `Service.busy` mort ; Security APPROVED (quoting terminal double-couche prouvé sûr). Bump minor 0.3.0. **Test manuel user-locked à faire par l'utilisateur.** |
