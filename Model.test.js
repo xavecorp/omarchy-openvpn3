@@ -2,13 +2,6 @@ const { test } = require("node:test");
 const assert = require("node:assert");
 const Model = require("./Model.js");
 
-// Real output from the installed openvpn3 (compact table layout).
-const configsCompact = `Configuration Name                                        Last used
-------------------------------------------------------------------------------
-testamento-profile-userlocked                             2026-09-01 11:15:31
-------------------------------------------------------------------------------
-`;
-
 // Real output from the installed openvpn3 (session block).
 const sessionsOutput = `-----------------------------------------------------------------------------
         Path: /net/openvpn/v3/sessions/d1b24861s3d90s4e7dsa445s8ae0a1c9b59b
@@ -20,45 +13,21 @@ Connected to: tcp:15.188.133.251:443
 -----------------------------------------------------------------------------
 `;
 
-// Legacy verbose layout (older openvpn3), still supported.
-const configsVerbose = `Configuration path
-Imported                                     Last used                 Used
-Name                                                                   Owner
-------------------------------------------------------------------------------
-/net/openvpn/v3/configuration/1a2b3c
- Fri Jan 10 09:15:22 2025                     Fri Jan 10 09:16:00 2025     3
- testamento-profile-userlocked                                          xavier
-------------------------------------------------------------------------------
-/net/openvpn/v3/configuration/4d5e6f
- Fri Jan 10 10:00:00 2025                     Fri Jan 10 10:01:00 2025     1
- testamento                                                             xavier
-------------------------------------------------------------------------------`;
-
-test("parseConfigsList reads the compact table layout", () => {
-    const result = Model.parseConfigsList(configsCompact);
-    assert.strictEqual(result.ok, true);
-    assert.deepStrictEqual(
-        result.configs.map((c) => c.name),
-        ["testamento-profile-userlocked"]
-    );
-});
-
-test("parseConfigsList reads the legacy verbose layout", () => {
-    const result = Model.parseConfigsList(configsVerbose);
-    assert.deepStrictEqual(
-        result.configs.map((c) => c.name),
-        ["testamento-profile-userlocked", "testamento"]
-    );
-    assert.strictEqual(result.configs[0].path, "/net/openvpn/v3/configuration/1a2b3c");
-});
-
-test("parseConfigsList handles empty listing", () => {
-    assert.deepStrictEqual(Model.parseConfigsList(""), { ok: true, configs: [], error: "" });
-    assert.deepStrictEqual(
-        Model.parseConfigsList("No configuration profiles available"),
-        { ok: true, configs: [], error: "" }
-    );
-});
+// Real `openvpn3 configs-list --json` output — the object path is the key, the
+// only source the code actually uses. One profile matching the session above
+// (so buildRows can merge them) and one idle profile with no running session.
+const configsListing = `{
+    "/net/openvpn/v3/configuration/1a2b3c" : {
+        "name" : "testamento-profile-userlocked",
+        "owner" : "xavierviricel",
+        "valid" : true
+    },
+    "/net/openvpn/v3/configuration/4d5e6f" : {
+        "name" : "testamento",
+        "owner" : "xavierviricel",
+        "valid" : true
+    }
+}`;
 
 test("parseSessionsList extracts a connected session", () => {
     const result = Model.parseSessionsList(sessionsOutput);
@@ -78,14 +47,14 @@ test("parseSessionsList handles no sessions", () => {
     );
 });
 
-test("buildRows merges the compact configs with the active session", () => {
+test("buildRows merges the configs listing with the active session", () => {
     const rows = Model.buildRows(
-        Model.parseConfigsList(configsCompact),
+        Model.parseConfigsListJson(configsListing),
         Model.parseSessionsList(sessionsOutput)
     );
-    assert.strictEqual(rows.length, 1);
+    assert.strictEqual(rows.length, 2);
     assert.strictEqual(
-        Model.rowByName(rows, "testamento-profile-userlocked").state,
+        Model.rowByPath(rows, "/net/openvpn/v3/configuration/1a2b3c").state,
         "connected"
     );
 });
@@ -105,11 +74,11 @@ test("connecting state when a session exists but is not yet connected", () => {
       Status: Connection, Client connecting
 -----------------------------------------------------------------------------`;
     const rows = Model.buildRows(
-        Model.parseConfigsList(configsCompact),
+        Model.parseConfigsListJson(configsListing),
         Model.parseSessionsList(connecting)
     );
     assert.strictEqual(
-        Model.rowByName(rows, "testamento-profile-userlocked").state,
+        Model.rowByPath(rows, "/net/openvpn/v3/configuration/1a2b3c").state,
         "connecting"
     );
 });
@@ -135,26 +104,22 @@ test("clip coerces null/undefined to an empty string", () => {
     assert.strictEqual(Model.clip(null, 10), "");
 });
 
-test("parseConfigsList clips overly long profile names", () => {
+test("parseConfigsListJson clips overly long profile names", () => {
     const longName = "z".repeat(400);
-    const raw = `Configuration Name                                        Last used
-------------------------------------------------------------------------------
-${longName}            2026-09-01 11:15:31
-------------------------------------------------------------------------------`;
-    const result = Model.parseConfigsList(raw);
+    const raw = `{ "/net/openvpn/v3/configuration/1a2b3c" : { "name" : "${longName}" } }`;
+    const result = Model.parseConfigsListJson(raw);
     assert.strictEqual(result.configs.length, 1);
     assert.strictEqual(result.configs[0].name.length, Model.MAX_NAME_LEN);
 });
 
-test("parseConfigsList caps the number of records", () => {
-    let raw = "Configuration Name                                        Last used\n";
-    raw += "------------------------------------------------------------------------------\n";
-    // Emit far more rows than the cap; each is a distinct compact-table row.
+test("parseConfigsListJson caps the number of records", () => {
+    const entries = [];
+    // Emit far more entries than the cap; each has a distinct object path.
     for (let i = 0; i < Model.MAX_RECORDS + 50; i++) {
-        raw += `profile-${i}            2026-09-01 11:15:31\n`;
+        entries.push(`"/net/openvpn/v3/configuration/p${i}" : { "name" : "profile-${i}" }`);
     }
-    raw += "------------------------------------------------------------------------------\n";
-    const result = Model.parseConfigsList(raw);
+    const raw = `{ ${entries.join(",")} }`;
+    const result = Model.parseConfigsListJson(raw);
     assert.strictEqual(result.configs.length, Model.MAX_RECORDS);
 });
 
@@ -181,35 +146,18 @@ test("validatePath accepts a well-formed object path and rejects the rest", () =
 
 test("buildRows exposes validated config and session object paths", () => {
     const rows = Model.buildRows(
-        Model.parseConfigsList(configsVerbose),
+        Model.parseConfigsListJson(configsListing),
         Model.parseSessionsList(sessionsOutput)
     );
-    const active = Model.rowByName(rows, "testamento-profile-userlocked");
+    const active = Model.rowByPath(rows, "/net/openvpn/v3/configuration/1a2b3c");
     assert.strictEqual(active.configPath, "/net/openvpn/v3/configuration/1a2b3c");
     assert.strictEqual(
         active.sessionPath,
         "/net/openvpn/v3/sessions/d1b24861s3d90s4e7dsa445s8ae0a1c9b59b"
     );
     // A profile with no running session has an empty session path.
-    const idle = Model.rowByName(rows, "testamento");
+    const idle = Model.rowByPath(rows, "/net/openvpn/v3/configuration/4d5e6f");
     assert.strictEqual(idle.sessionPath, "");
-});
-
-test("configPathForName / sessionPathForName resolve exact IDs, empty when absent", () => {
-    const rows = Model.buildRows(
-        Model.parseConfigsList(configsVerbose),
-        Model.parseSessionsList(sessionsOutput)
-    );
-    assert.strictEqual(
-        Model.configPathForName(rows, "testamento-profile-userlocked"),
-        "/net/openvpn/v3/configuration/1a2b3c"
-    );
-    assert.strictEqual(
-        Model.sessionPathForName(rows, "testamento"),
-        ""
-    );
-    assert.strictEqual(Model.configPathForName(rows, "does-not-exist"), "");
-    assert.strictEqual(Model.sessionPathForName(rows, "does-not-exist"), "");
 });
 
 test("parseSessionsList sanitizes injected escape codes in status/name", () => {
@@ -246,14 +194,6 @@ test("parseSessionsList classifies a clean connected status with an injected nam
     assert.strictEqual(result.sessions[0].state, "connected");
 });
 
-test("heroText clips the active name", () => {
-    const longName = "n".repeat(400);
-    const hero = Model.heroText(longName, "connected");
-    // "Connected · " prefix plus a clipped name.
-    assert.ok(hero.length <= "Connected · ".length + Model.MAX_NAME_LEN);
-    assert.ok(hero.indexOf("Connected · ") === 0);
-});
-
 // ---- JSON configs listing (preferred source, keyed by object path) ---------
 
 const configsJson = `{
@@ -280,8 +220,14 @@ test("parseConfigsListJson feeds a resolvable configPath end to end", () => {
         Model.parseConfigsListJson(configsJson),
         Model.parseSessionsList("")
     );
+    const row = Model.rowByPath(
+        rows,
+        "/net/openvpn/v3/configuration/0c19147cx7ecex4846xbc1axb44fdb7e730c"
+    );
+    assert.ok(row);
+    assert.strictEqual(row.name, "testamento-profile-userlocked");
     assert.strictEqual(
-        Model.configPathForName(rows, "testamento-profile-userlocked"),
+        row.configPath,
         "/net/openvpn/v3/configuration/0c19147cx7ecex4846xbc1axb44fdb7e730c"
     );
 });
@@ -370,19 +316,19 @@ test("rowByPath never matches an empty, non-string, or unknown path", () => {
     assert.strictEqual(Model.rowByPath([], "/net/openvpn/v3/configuration/x"), null);
 });
 
-test("sessionPathForConfigPath resolves the running session by config path", () => {
+test("rowByPath resolves the running session by config path", () => {
     const rows = Model.buildRows(
         Model.parseConfigsListJson(configsJson),
         Model.parseSessionsList(sessionsOutput)
     );
     const activePath = "/net/openvpn/v3/configuration/0c19147cx7ecex4846xbc1axb44fdb7e730c";
     assert.strictEqual(
-        Model.sessionPathForConfigPath(rows, activePath),
+        Model.rowByPath(rows, activePath).sessionPath,
         "/net/openvpn/v3/sessions/d1b24861s3d90s4e7dsa445s8ae0a1c9b59b"
     );
-    // Unknown / empty config paths resolve to no session, never a wrong one.
-    assert.strictEqual(Model.sessionPathForConfigPath(rows, "/net/openvpn/v3/configuration/other"), "");
-    assert.strictEqual(Model.sessionPathForConfigPath(rows, ""), "");
+    // Unknown / empty config paths resolve to no row, never a wrong session.
+    assert.strictEqual(Model.rowByPath(rows, "/net/openvpn/v3/configuration/other"), null);
+    assert.strictEqual(Model.rowByPath(rows, ""), null);
 });
 
 

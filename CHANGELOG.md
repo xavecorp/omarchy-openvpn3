@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.2] - 2026-09-05
+
+### Removed
+
+- Delete ~235 lines of dead code with no observable behaviour change. The
+  text-based `configs-list` parser (`parseConfigsList` and its private helpers)
+  is gone now that the plugin reads `configs-list --json` exclusively;
+  `isSeparator` is kept as `parseSessionsList` still uses it. The unused
+  resolvers `configPathForName`, `sessionPathForName`,
+  `sessionPathForConfigPath` and `heroText` are removed. In `Service.qml` the
+  `refreshing` property (written but never read) and the `errorHold` timer (no
+  handler, no reader — inert) are removed. Tests dropped from 35 to 30: the
+  ones covering deleted code were removed, and those that used the text parser
+  only as a fixture factory were migrated to `parseConfigsListJson` / `rowByPath`
+  so live coverage (validated paths, name clipping, record cap) is preserved.
+  (A15, A16, A17)
+
 ## [0.3.1] - 2026-09-05
 
 ### Fixed

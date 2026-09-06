@@ -133,133 +133,6 @@ function parseConfigsListJson(raw) {
     return { ok: true, configs: configs, error: "" };
 }
 
-// Parses `openvpn3 configs-list`.
-//
-// Each profile is a record introduced by its D-Bus config path line, followed
-// by a timestamp/usage row and then a "<name>   <owner>" row. The record ends
-// at the next path line or separator. The profile name is the first token of
-// the last data row of the record, because the timestamp row starts with a
-// weekday token while the name row does not.
-//
-// Two layouts exist across openvpn3 versions:
-//
-//   Compact table (current):
-//     Configuration Name                       Last used
-//     ----------------------------------------------------
-//     testamento-profile-userlocked            2026-09-01 11:15:31
-//     ----------------------------------------------------
-//
-//   Verbose, path-based (older):
-//     /net/openvpn/v3/configuration/1a2b3c
-//      Fri Jan 10 09:15:22 2025    ...    3
-//      testamento-profile-userlocked           owner
-//
-// Both are supported: a record introduced by a config path line is parsed the
-// verbose way; any other data row between separators is a compact row whose
-// first column (before the run of spaces) is the profile name.
-//
-// Returns { ok, configs: [{ name, path }], error }.
-function parseConfigsList(raw) {
-    var text = String(raw || "").trim();
-    if (text === "") {
-        return { ok: true, configs: [], error: "" };
-    }
-    if (/no configuration/i.test(text)) {
-        return { ok: true, configs: [], error: "" };
-    }
-
-    var lines = toLines(raw);
-    var configs = [];
-    var seen = {};
-    var pendingPath = "";
-    var recordLines = [];
-
-    function push(name, path) {
-        var safeName = clip(name, MAX_NAME_LEN);
-        if (safeName === "" || seen[safeName] === true) return;
-        if (configs.length >= MAX_RECORDS) return;
-        seen[safeName] = true;
-        configs.push({ name: safeName, path: validatePath(path, CONFIG_PATH_PREFIX) });
-    }
-
-    function flushVerbose() {
-        if (pendingPath !== "") {
-            push(nameFromRecord(recordLines), pendingPath);
-        }
-        pendingPath = "";
-        recordLines = [];
-    }
-
-    for (var i = 0; i < lines.length; i++) {
-        var line = lines[i];
-        var trimmed = line.trim();
-        if (trimmed === "" || isSeparator(line)) {
-            continue;
-        }
-
-        var pathIndex = trimmed.indexOf(CONFIG_PATH_PREFIX);
-        if (pathIndex !== -1) {
-            flushVerbose();
-            pendingPath = trimmed.slice(pathIndex).split(/\s+/)[0];
-            continue;
-        }
-
-        if (isHeaderRow(trimmed)) {
-            continue;
-        }
-
-        if (pendingPath !== "") {
-            // Inside a verbose record: collect its rows for nameFromRecord.
-            recordLines.push(trimmed);
-            continue;
-        }
-
-        // Compact table row: "<name>   <last used>".
-        push(firstColumn(trimmed), "");
-    }
-    flushVerbose();
-
-    return { ok: true, configs: configs, error: "" };
-}
-
-// Column-label rows that must never be treated as profiles. The compact table
-// header is exactly "Configuration Name ... Last used"; the verbose layout has
-// "Configuration path", "Imported", and a bare "Name" header.
-function isHeaderRow(trimmed) {
-    if (/^Configuration (Name|path)\b/.test(trimmed)) return true;
-    if (/^(Imported|Name)\b/.test(trimmed)) return true;
-    return false;
-}
-
-// The profile name is the first column, delimited from the trailing column
-// (last-used date or owner) by a run of two or more spaces.
-function firstColumn(rowText) {
-    var parts = rowText.trim().split(/\s{2,}/);
-    return parts.length > 0 ? parts[0].trim() : "";
-}
-
-var WEEKDAY_PREFIX = /^(Mon|Tue|Wed|Thu|Fri|Sat|Sun)\b/;
-
-// Picks the profile name out of a verbose record's data rows. The timestamp
-// row starts with a weekday, so the name row is the first row that does not —
-// or, failing that, the last row.
-function nameFromRecord(recordLines) {
-    if (!(recordLines instanceof Array) || recordLines.length === 0) {
-        return "";
-    }
-    var nameRow = "";
-    for (var i = 0; i < recordLines.length; i++) {
-        if (!WEEKDAY_PREFIX.test(recordLines[i])) {
-            nameRow = recordLines[i];
-            break;
-        }
-    }
-    if (nameRow === "") {
-        nameRow = recordLines[recordLines.length - 1];
-    }
-    return firstColumn(nameRow);
-}
-
 // Parses `openvpn3 sessions-list`.
 //
 // Each session is a labelled block. The CLI prints a separator rule only at the
@@ -487,39 +360,6 @@ function stateLabel(state) {
     return "Off";
 }
 
-// The bar-widget tooltip / hero title.
-function heroText(activeName, state) {
-    if (!activeName) {
-        return "Disconnected";
-    }
-    return stateLabel(state) + " · " + clip(activeName, MAX_NAME_LEN);
-}
-
-// Resolves the validated config object path for a row, used to start a session
-// against an exact ID rather than an ambiguous name. Returns "" when the row is
-// unknown or its path did not validate.
-function configPathForName(rows, name) {
-    var row = rowByName(rows, name);
-    return row && typeof row.configPath === "string" ? row.configPath : "";
-}
-
-// Resolves the validated session object path for a row, used to disconnect an
-// exact running session rather than by name. Returns "" when there is no
-// running session or its path did not validate.
-function sessionPathForName(rows, name) {
-    var row = rowByName(rows, name);
-    return row && typeof row.sessionPath === "string" ? row.sessionPath : "";
-}
-
-// Resolves the validated session object path for the row whose config object
-// path matches — used to disconnect an exact running session by its own unique
-// id, resolved from the profile's unique id rather than an ambiguous name.
-// Returns "" when there is no running session or its path did not validate.
-function sessionPathForConfigPath(rows, configPath) {
-    var row = rowByPath(rows, configPath);
-    return row && typeof row.sessionPath === "string" ? row.sessionPath : "";
-}
-
 // Clips arbitrary error text (e.g. a CLI stderr line) for safe, bounded display.
 function clipError(value) {
     return clip(value, MAX_ERROR_LEN);
@@ -532,7 +372,6 @@ function clipName(value) {
 
 if (typeof module !== "undefined") {
     module.exports = {
-        parseConfigsList: parseConfigsList,
         parseConfigsListJson: parseConfigsListJson,
         parseSessionsList: parseSessionsList,
         sessionStateFromStatus: sessionStateFromStatus,
@@ -541,10 +380,6 @@ if (typeof module !== "undefined") {
         rowByName: rowByName,
         rowByPath: rowByPath,
         stateLabel: stateLabel,
-        heroText: heroText,
-        configPathForName: configPathForName,
-        sessionPathForName: sessionPathForName,
-        sessionPathForConfigPath: sessionPathForConfigPath,
         validatePath: validatePath,
         clip: clip,
         clipError: clipError,

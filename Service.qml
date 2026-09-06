@@ -36,7 +36,6 @@ Item {
     property var configs: []           // [{ name, configPath, sessionPath, state }]
     property string activeName: ""
     property string lastError: ""
-    property bool refreshing: false
 
     // Optimistic target state so a flipped switch reacts instantly instead of
     // waiting for the next poll. Keyed by the profile's unique config object
@@ -201,13 +200,11 @@ Item {
     Component.onDestruction: {
         _destroyed = true
         _readAborted = true
-        refreshing = false
         clearPending()
 
         refreshTimer.stop()
         ramp.stop()
         watchdog.stop()
-        errorHold.stop()
         actionWatchdog.stop()
 
         if (probeProcess.running) probeProcess.running = false
@@ -269,7 +266,6 @@ Item {
         if (configsProcess.running || sessionsProcess.running) return
         _configsOutput = ""
         _readAborted = false
-        refreshing = true
         configsProcess.command = wrap(readTimeoutSec, capScriptRead, ["configs-list", "--json"])
         configsProcess.running = true
         if (!watchdog.running) watchdog.restart()
@@ -410,17 +406,8 @@ Item {
             root._readAborted = true
             if (configsProcess.running) configsProcess.running = false
             if (sessionsProcess.running) sessionsProcess.running = false
-            root.refreshing = false
             root.lastError = "openvpn3 stopped responding"
         }
-    }
-
-    // Keeps an action error on screen long enough to read, since the status
-    // poll that follows lands under a second later and would wipe it out.
-    Timer {
-        id: errorHold
-        interval: 6000
-        repeat: false
     }
 
     // Backstop for the disconnect action (the only command run through
@@ -438,7 +425,6 @@ Item {
             if (actionProcess.running) actionProcess.running = false
             root.clearPending()
             root.lastError = "openvpn3 command timed out"
-            errorHold.restart()
         }
     }
 
@@ -467,7 +453,6 @@ Item {
             // failing command is exactly what we must not apply.
             if (exitCode !== 0) {
                 watchdog.stop()
-                root.refreshing = false
                 root.available = false
                 root.lastError = "openvpn3 configs-list failed"
                 return
@@ -499,7 +484,6 @@ Item {
             if (root._readAborted) return
 
             watchdog.stop()
-            root.refreshing = false
             root._sessionsOutput = root.boundStored(sessionsOut.text)
 
             // Apply the merged reads only on a clean exit. Any non-zero exit is

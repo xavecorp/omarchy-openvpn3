@@ -162,31 +162,27 @@ user-locked à confirmer par l'utilisateur (angle mort assumé — pas de shell 
 
 ---
 
-## Lot 6 — Simplification (INV-2, ~200 lignes)
+## Lot 6 — Simplification (INV-2, ~235 lignes)
 
-> À faire **après** le Lot 3 : plusieurs suppressions dépendent de A9.
+> ✅ **Livré** sur `fix/hardening-lot6-simplify` (voir journal). -235 lignes nettes.
 
-- [ ] **A15** ⚪ Supprimer `parseConfigsList` + `isHeaderRow`, `firstColumn`,
-      `WEEKDAY_PREFIX`, `nameFromRecord` — `Model.js:162-260` (~115 l.)
-  - [ ] ⚠️ **Conserver `isSeparator`** (requis par `parseSessionsList`)
-  - [ ] Export retiré + 4 tests correspondants supprimés
-  - [ ] `node --test` toujours vert
+- [x] **A15** ⚪ Supprimer `parseConfigsList` + `isHeaderRow`, `firstColumn`,
+      `WEEKDAY_PREFIX`, `nameFromRecord` (~148 l.)
+  - [x] ⚠️ `isSeparator`/`toLines` **conservés** (requis par `parseSessionsList`)
+  - [x] Export retiré ; tests morts supprimés, tests-fixtures migrés vers JSON
+  - [x] `node --test` vert (35 → 30)
 
-- [ ] **A16** ⚪ Supprimer `configPathForName`, `sessionPathForName`,
-      `sessionPathForConfigPath`, `heroText` — `Model.js:432-464` (~30 l.)
-  - [ ] Exports retirés + 2 tests supprimés
-  - [ ] ⚠️ Vérifier au préalable qu'A19 ne les réutilise pas
+- [x] **A16** ⚪ Supprimer `configPathForName`, `sessionPathForName`,
+      `sessionPathForConfigPath`, `heroText` (~34 l.)
+  - [x] Exports retirés ; 0 usage QML confirmé (A19 n'en dépend pas)
 
-- [ ] **A17** ⚪ Supprimer le code inerte de `Service.qml`
-  - [ ] `errorHold` (Timer sans `onTriggered` ni lecteur) + ses 4 appels
-        — *ou* l'implémenter (`onTriggered: lastError = ""`) ; INV-2 → suppression
-  - [ ] `refreshing` (écrit 5×, lu 0×)
+- [x] **A17** ⚪ Supprimer le code inerte de `Service.qml`
+  - [x] `errorHold` (Timer sans `onTriggered` ni lecteur) + ses appels
+  - [x] `refreshing` (écrit 5×, lu 0×) ; `lastError` reste géré correctement
 
-- [ ] **A18** ⚪ Aligner commentaires et CHANGELOG sur la réalité
-      — `Service.qml:26-31, 78-99, 81-88` · `CHANGELOG.md:41-44`
-  - [ ] Plus aucune promesse de reaping complet du groupe non tenue
-  - [ ] Plus aucune promesse de bornage de sortie non tenue
-  - [ ] À livrer **avec** A5/A6, jamais séparément
+- [x] **A18** ⚪ Commentaires : déjà rendus honnêtes au Lot 2-3 (confirmé par lecture).
+      CHANGELOG historique **non réécrit** (reflète ce qui était cru alors) ; le
+      comportement réel est documenté depuis 0.3.0.
 
 ---
 
