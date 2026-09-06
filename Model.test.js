@@ -59,12 +59,12 @@ test("buildRows merges the configs listing with the active session", () => {
     );
 });
 
-test("activeSessionName returns the connected session", () => {
+test("activeSessionPath returns the connected session's object path", () => {
     assert.strictEqual(
-        Model.activeSessionName(Model.parseSessionsList(sessionsOutput)),
-        "testamento-profile-userlocked"
+        Model.activeSessionPath(Model.parseSessionsList(sessionsOutput)),
+        "/net/openvpn/v3/sessions/d1b24861s3d90s4e7dsa445s8ae0a1c9b59b"
     );
-    assert.strictEqual(Model.activeSessionName(Model.parseSessionsList("")), "");
+    assert.strictEqual(Model.activeSessionPath(Model.parseSessionsList("")), "");
 });
 
 test("connecting state when a session exists but is not yet connected", () => {
@@ -142,6 +142,32 @@ test("validatePath accepts a well-formed object path and rejects the rest", () =
         Model.validatePath("/net/openvpn/v3/configuration/", Model.CONFIG_PATH_PREFIX),
         ""
     );
+});
+
+// A13: the tail must be a single flat token. A '/' or '.' in the tail is a
+// path-traversal attempt and must be rejected, while a real openvpn3 tail
+// (word chars only, no '/' or '.') is accepted.
+test("validatePath rejects path traversal in the tail and accepts a real tail", () => {
+    // Traversal: prefix present, but the tail climbs out with ../.. — the old
+    // PATH_TAIL allowed '/' and '.', letting this through. Must now be rejected.
+    assert.strictEqual(
+        Model.validatePath("/net/openvpn/v3/configuration/../../sessions/x", Model.CONFIG_PATH_PREFIX),
+        ""
+    );
+    // A single '.' or '/' anywhere in the tail is also rejected.
+    assert.strictEqual(
+        Model.validatePath("/net/openvpn/v3/configuration/a.b", Model.CONFIG_PATH_PREFIX),
+        ""
+    );
+    assert.strictEqual(
+        Model.validatePath("/net/openvpn/v3/configuration/a/b", Model.CONFIG_PATH_PREFIX),
+        ""
+    );
+    // A real openvpn3 tail (encoded separators are literal 's'/'x', not '/'.'):
+    const real = "/net/openvpn/v3/configuration/0c19147cx7ecex4846xbc1axb44fdb7e730c";
+    assert.strictEqual(Model.validatePath(real, Model.CONFIG_PATH_PREFIX), real);
+    const realSession = "/net/openvpn/v3/sessions/d1b24861s3d90s4e7dsa445s8ae0a1c9b59b";
+    assert.strictEqual(Model.validatePath(realSession, Model.SESSION_PATH_PREFIX), realSession);
 });
 
 test("buildRows exposes validated config and session object paths", () => {
@@ -331,6 +357,83 @@ test("rowByPath resolves the running session by config path", () => {
     assert.strictEqual(Model.rowByPath(rows, ""), null);
 });
 
+// ---- A19: identity by session path, ambiguity refused ----------------------
+
+// Two profiles that share the display name "work"; only /bbbb is really the
+// running session. Because sessions-list exposes no config path (a hard CLI
+// constraint), buildRows pairs the session to a config BY NAME, so BOTH rows
+// are assigned the SAME sessionPath — the exact trap A19 addresses.
+const twoWorkOneRunning = `-----------------------------------------------------------------------------
+        Path: /net/openvpn/v3/sessions/1111
+ Config name: work
+      Status: Connection, Client connected
+-----------------------------------------------------------------------------`;
+
+test("activeSessionPath returns the session object path, never a name", () => {
+    assert.strictEqual(
+        Model.activeSessionPath(Model.parseSessionsList(twoWorkOneRunning)),
+        "/net/openvpn/v3/sessions/1111"
+    );
+});
+
+test("buildRows pairs by name, so duplicate names share one session path (CLI limit)", () => {
+    // This documents the unavoidable pairing: both "work" rows carry the same
+    // sessionPath because the CLI gives us only the name to merge on.
+    const rows = Model.buildRows(
+        Model.parseConfigsListJson(configsDuplicateNames),
+        Model.parseSessionsList(twoWorkOneRunning)
+    );
+    assert.strictEqual(rows.length, 2);
+    assert.strictEqual(rows[0].sessionPath, "/net/openvpn/v3/sessions/1111");
+    assert.strictEqual(rows[1].sessionPath, "/net/openvpn/v3/sessions/1111");
+});
+
+test("rowBySessionPath refuses (null) when duplicate names share a session path", () => {
+    // The active session path maps to TWO rows. There is no honest way to know
+    // which "work" the tunnel belongs to, so rowBySessionPath returns null and
+    // the caller (Service.disconnectActive / disconnectConfig) refuses rather
+    // than tear down the wrong profile's tunnel.
+    const rows = Model.buildRows(
+        Model.parseConfigsListJson(configsDuplicateNames),
+        Model.parseSessionsList(twoWorkOneRunning)
+    );
+    assert.strictEqual(
+        Model.rowBySessionPath(rows, "/net/openvpn/v3/sessions/1111"),
+        null
+    );
+});
+
+test("rowBySessionPath resolves the exact row when the session path is unique", () => {
+    // No duplicate names: the single connected profile resolves cleanly, and
+    // its name can be re-derived for display (never the raw object path).
+    const rows = Model.buildRows(
+        Model.parseConfigsListJson(configsJson),
+        Model.parseSessionsList(sessionsOutput)
+    );
+    const row = Model.rowBySessionPath(
+        rows,
+        "/net/openvpn/v3/sessions/d1b24861s3d90s4e7dsa445s8ae0a1c9b59b"
+    );
+    assert.ok(row);
+    assert.strictEqual(row.name, "testamento-profile-userlocked");
+    assert.strictEqual(
+        row.configPath,
+        "/net/openvpn/v3/configuration/0c19147cx7ecex4846xbc1axb44fdb7e730c"
+    );
+});
+
+test("rowBySessionPath never matches an empty, non-string, or unknown path", () => {
+    const rows = Model.buildRows(
+        Model.parseConfigsListJson(configsJson),
+        Model.parseSessionsList(sessionsOutput)
+    );
+    assert.strictEqual(Model.rowBySessionPath(rows, ""), null);
+    assert.strictEqual(Model.rowBySessionPath(rows, undefined), null);
+    assert.strictEqual(Model.rowBySessionPath(rows, null), null);
+    assert.strictEqual(Model.rowBySessionPath(rows, "/net/openvpn/v3/sessions/nope"), null);
+    assert.strictEqual(Model.rowBySessionPath([], "/net/openvpn/v3/sessions/x"), null);
+});
+
 
 // ---- A1: StatusMinor -> state mapping (anchored, never substring) ----------
 
@@ -413,10 +516,10 @@ test("parseSessionsList splits two blocks separated by a blank line", () => {
     assert.strictEqual(beta.state, "connecting");
 });
 
-test("activeSessionName picks the connected session out of a blank-separated list", () => {
+test("activeSessionPath picks the connected session's path out of a blank-separated list", () => {
     assert.strictEqual(
-        Model.activeSessionName(Model.parseSessionsList(twoSessionsBlankSeparated)),
-        "alpha"
+        Model.activeSessionPath(Model.parseSessionsList(twoSessionsBlankSeparated)),
+        "/net/openvpn/v3/sessions/1111"
     );
 });
 
@@ -439,7 +542,7 @@ test("parseSessionsList splits two blocks separated by a separator rule", () => 
         result.sessions.map((s) => s.name),
         ["alpha", "beta"]
     );
-    assert.strictEqual(Model.activeSessionName(result), "alpha");
+    assert.strictEqual(Model.activeSessionPath(result), "/net/openvpn/v3/sessions/1111");
 });
 
 // ---- A3: state -> label table ----------------------------------------------

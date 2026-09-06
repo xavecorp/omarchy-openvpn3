@@ -148,17 +148,15 @@ user-locked à confirmer par l'utilisateur (angle mort assumé — pas de shell 
 
 ## Lot 5 — Durcissement sécurité
 
-- [ ] **A12** 🟡 Assainir l'environnement des sous-processus — les 4 `Process`
-  - [ ] `clearEnvironment: true` + `environment: ({ PATH: "/usr/bin" })`
-  - [ ] ⚠️ **Valider `session-start`** sous env vide avant de généraliser
-        (les 3 autres commandes sont déjà prouvées OK avec `env -i`)
-  - [ ] Non-régression : les 3 lectures/actions fonctionnent toujours
+> ✅ **Livré** sur `fix/hardening-lot5-7-env-and-identity` (voir journal).
 
-- [ ] **A13** 🔵 Resserrer `PATH_TAIL` à `/^[A-Za-z0-9_-]+$/` — `Model.js:28`
-  - [ ] Test : `.../../sessions/aaaa` rejeté ; un vrai tail accepté
-
-- [ ] **A14** 🔵 *(optionnel)* Vocabulaire d'erreur fixe au lieu du texte CLI brut
-      — `Service.qml:465-469`
+- [x] **A12** 🟡 Assainir l'environnement des sous-processus — les 4 `Process`
+  - [x] `clearEnvironment: true` + `environment: ({ PATH: "/usr/bin" })`
+  - [x] P2 **levé** : `session-start` n'est plus un Process (délégué terminal) ;
+        les 4 Process restants prouvés OK sous `env -i` ; BASH_ENV fermé (PoC)
+- [x] **A13** 🔵 `PATH_TAIL` resserré à `/^[A-Za-z0-9_-]+$/` — traversée `../..` rejetée,
+      vrais tails acceptés (PoC)
+- [ ] **A14** 🔵 *(optionnel, NON fait)* Vocabulaire d'erreur fixe — reporté (facultatif)
 
 ---
 
@@ -188,17 +186,17 @@ user-locked à confirmer par l'utilisateur (angle mort assumé — pas de shell 
 
 ## Lot 7 — Ambiguïté résiduelle nom/path
 
-- [ ] **A19** 🟠 Unifier l'identité sur les object paths
-      — `Model.js:349, 359-366, 376-388` · `Service.qml:114, 296` · `BarWidget.qml:63-67`
-  - [ ] `activeSessionName` → renvoie une `sessionPath` (renommée `activeSessionPath`)
-  - [ ] `rowByName` éliminé de `Service.state`, `disconnectActive`,
-        `BarWidget.activeConfigPath`
-  - [ ] Deux profils homonymes → l'action est **refusée**, pas devinée
-  - [ ] Contrainte CLI documentée (`sessions-list` n'expose pas le config path,
-        pas de mode JSON)
-  - [ ] Test : 2 profils homonymes, 1 seul monté → pas de `sessionPath` partagée,
-        pas de déconnexion croisée
-  - [ ] ⚠️ Dépend de A2 (sans quoi le multi-sessions est de toute façon faussé)
+> ✅ **Livré** sur `fix/hardening-lot5-7-env-and-identity` (voir journal).
+
+- [x] **A19** 🟠 Unifier l'identité sur les object paths
+  - [x] `activeSessionName` → `activeSessionPath` (renvoie une sessionPath)
+  - [x] `rowByName` **supprimé** ; nouveau `rowBySessionPath` (refuse si 0 ou >1 match)
+  - [x] `Service.state`/`disconnectActive`/`disconnectConfig`/`BarWidget.activeConfigPath`
+        résolvent par path ; action **refusée** (lastError) sur homonymes
+  - [x] Nom affiché **re-dérivé** depuis la row (jamais d'object path à l'écran)
+  - [x] Contrainte CLI documentée (`sessions-list` sans config path ni JSON →
+        appariement par nom dans buildRows, borné par le refus en aval)
+  - [x] Tests : 2 profils homonymes 1 monté → rowBySessionPath null → refus (PoC + test)
 
 ---
 
@@ -218,4 +216,7 @@ user-locked à confirmer par l'utilisateur (angle mort assumé — pas de shell 
 | Date | Lot(s) | Commit | Vérif | Notes |
 |---|---|---|---|---|
 | 2026-09-05 | Lot 1 (A1–A4) | c22085d (PR #2, mergée) | `node --test` 35/35 · qmllint exit 0 | Review APPROVED ; Security APPROVED après 1 durcissement (vue stale → `error`). Labels EN. |
-| 2026-09-05 | Lot 2 (A5–A8) + Lot 3 (A9) | _(à compléter au commit)_ | 35/35 · qmllint exit 0 · PoC A5(KILL)/A6(caps) | A9 : session-start délégué au terminal (Service headless → logique en UI). Review APPROVED après retrait de `Service.busy` mort ; Security APPROVED (quoting terminal double-couche prouvé sûr). Bump minor 0.3.0. **Test manuel user-locked à faire par l'utilisateur.** |
+| 2026-09-05 | Lot 2 (A5–A8) + Lot 3 (A9) | d4b9042 (PR #3, mergée) | 35/35 · qmllint exit 0 · PoC A5(KILL)/A6(caps) | A9 : session-start délégué au terminal (Service headless → logique en UI). Review APPROVED après retrait de `Service.busy` mort ; Security APPROVED. Bump minor 0.3.0. **Test manuel user-locked à faire.** |
+| 2026-09-05 | Lot 4 (A10–A11) | 297c18a (PR #4) | 35/35 · qmllint 0 · qml6 6s sans binding loop | Flickable+clip+scroll+ensureVisible ; carte +md*2. Review+Security APPROVED. Bump patch 0.3.1. **Test manuel 30 profils à faire.** |
+| 2026-09-05 | Lot 6 (A15–A18) | 2dda901 (PR #5) | 30/30 · qmllint 0 | -235 lignes code mort. Review+Security APPROVED. Bump patch 0.3.2. ⚠️ Conflit CHANGELOG/version attendu vs PR#4 (ordre de merge). |
+| 2026-09-05 | Lot 5 (A12–A13) + Lot 7 (A19) | _(à compléter)_ | 36/36 · qmllint 0 · PoC BASH_ENV fermé + refus homonymes | Branche partie du Lot 6. clearEnvironment (BASH_ENV neutralisé), PATH_TAIL resserré, identité par sessionPath (refus sur homonymes, nom re-dérivé). Review+Security APPROVED. Bump minor 0.4.0. A14 (optionnel) non fait. |

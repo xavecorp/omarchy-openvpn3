@@ -34,7 +34,12 @@ Item {
     property var settings: ({})
     property bool available: true
     property var configs: []           // [{ name, configPath, sessionPath, state }]
-    property string activeName: ""
+    // A19: the active identity is a session object PATH, not a display name.
+    // sessions-list exposes no config path and no JSON mode (a hard CLI
+    // constraint), so the session path is the one unambiguous handle a running
+    // session carries. The UI re-derives the readable name from the matching
+    // row (Model.rowBySessionPath) — it never renders this raw object path.
+    property string activeSessionPath: ""
     property string lastError: ""
 
     // Optimistic target state so a flipped switch reacts instantly instead of
@@ -134,10 +139,12 @@ Item {
         // "error" (urgent color; lastError/tooltip explains). Placed after the
         // pendingPath block so an in-flight optimistic action still wins.
         if (_configsStale) return "error"
-        if (activeName === "") return "disconnected"
-        var row = Model.rowByName(configs, activeName)
-        // If the active session name is not yet reflected in a row, never claim
-        // "connected" — the tunnel state is unproven. Fall back to "connecting".
+        if (activeSessionPath === "") return "disconnected"
+        var row = Model.rowBySessionPath(configs, activeSessionPath)
+        // If the active session path is not (yet) reflected in exactly one row
+        // — not merged yet, or ambiguous because two profiles share a name —
+        // never claim "connected": the tunnel state is unproven. Fall back to
+        // "connecting".
         return row ? row.state : "connecting"
     }
 
@@ -241,6 +248,16 @@ Item {
         property string candidate: ""
         running: false
         command: []
+        // A12: run with a scrubbed environment. `bash -c` reads BASH_ENV even
+        // when non-interactive, so an inherited BASH_ENV would execute
+        // arbitrary code on every poll. Clearing the environment and pinning a
+        // minimal PATH removes that vector (defence in depth: whoever can set
+        // the variable already runs as this user). Proven under `env -i`:
+        // `test -x`, configs-list --json, sessions-list and session-manage all
+        // exit 0 / behave identically with an empty environment. Repeated
+        // verbatim on each Process rather than hidden in a factory (INV-2).
+        clearEnvironment: true
+        environment: ({ PATH: "/usr/bin" })
         onExited: function (exitCode) {
             // Reaped by onDestruction, not a real probe result: touch nothing
             // and never re-arm a Process on a component being destroyed.
@@ -287,7 +304,7 @@ Item {
         _configsStale = false
 
         configs = Model.buildRows(configsResult, sessionsResult)
-        activeName = Model.activeSessionName(sessionsResult)
+        activeSessionPath = Model.activeSessionPath(sessionsResult)
 
         // Reality caught up with the optimistic state — stop overriding it.
         if (pendingPath !== "" && !actionProcess.running) clearPending()
@@ -330,6 +347,17 @@ Item {
             root.refresh()
             return
         }
+        // A19: refuse rather than guess. buildRows pairs sessions to configs by
+        // name (a CLI constraint — sessions-list has no config path), so when
+        // two profiles share a display name they are assigned the SAME
+        // sessionPath. Disconnecting one would then tear down the other's
+        // tunnel. If more than one row carries this session path the identity
+        // is ambiguous, so we refuse (rowBySessionPath returns null) instead of
+        // acting on the wrong profile.
+        if (Model.rowBySessionPath(configs, sessionPath) === null) {
+            root.lastError = "Cannot disconnect: two profiles share this name"
+            return
+        }
         pendingPath = configPath
         pendingAction = "disconnect"
         lastError = ""
@@ -339,12 +367,19 @@ Item {
         ramp.restart()
         if (!actionWatchdog.running) actionWatchdog.restart()
     }
-    // the bar quick-toggle). Resolves the active session's row so it acts on an
-    // exact object path rather than the raw name.
+    // the bar quick-toggle). Resolves the active session's row by its session
+    // object path so it acts on an exact object path, never a name. If two
+    // profiles share a display name the active session path maps to more than
+    // one row (buildRows pairs by name — a CLI constraint); rowBySessionPath
+    // then returns null and we refuse rather than disconnect the wrong tunnel.
     function disconnectActive() {
-        if (activeName === "") return
-        var row = Model.rowByName(configs, activeName)
-        if (row) disconnectConfig(row.configPath)
+        if (activeSessionPath === "") return
+        var row = Model.rowBySessionPath(configs, activeSessionPath)
+        if (!row) {
+            root.lastError = "Cannot disconnect: two profiles share this name"
+            return
+        }
+        disconnectConfig(row.configPath)
     }
 
     // What the UI should draw for one profile, optimism included. Keyed by the
@@ -434,6 +469,10 @@ Item {
         id: configsProcess
         running: false
         command: []
+        // A12: scrubbed environment (see probeProcess) — bash -c would
+        // otherwise source an inherited BASH_ENV on every poll.
+        clearEnvironment: true
+        environment: ({ PATH: "/usr/bin" })
         // stderr is dropped in-band by capScriptRead (2>/dev/null); a stderr
         // collector here would only buffer bytes we never read.
         stdout: StdioCollector { id: configsOut; waitForEnd: true }
@@ -477,6 +516,9 @@ Item {
         id: sessionsProcess
         running: false
         command: []
+        // A12: scrubbed environment (see probeProcess).
+        clearEnvironment: true
+        environment: ({ PATH: "/usr/bin" })
         // stderr dropped in-band by capScriptRead (2>/dev/null); see configsProcess.
         stdout: StdioCollector { id: sessionsOut; waitForEnd: true }
         onExited: function (exitCode) {
@@ -501,6 +543,9 @@ Item {
         id: actionProcess
         running: false
         command: []
+        // A12: scrubbed environment (see probeProcess).
+        clearEnvironment: true
+        environment: ({ PATH: "/usr/bin" })
         // Only session-manage --disconnect runs here now (session-start is
         // delegated to a terminal by the panel). With capScriptAction the
         // command's stderr is folded into stdout, so actionOut carries any

@@ -22,10 +22,15 @@ var MAX_STATUS_LEN = 160;      // Human-readable status line.
 var MAX_PATH_LEN = 256;        // D-Bus object paths.
 var MAX_ERROR_LEN = 240;       // Error text surfaced to the user.
 
-// The characters allowed inside a validated D-Bus object path segment. The
-// openvpn3 paths are ASCII word chars plus separators; anything else is a sign
-// the token was not really a path and must be rejected.
-var PATH_TAIL = /^[A-Za-z0-9._\/-]+$/;
+// The characters allowed inside a validated D-Bus object path tail (the part
+// after the fixed prefix). Real openvpn3 tails are a single flat token of ASCII
+// word chars only — e.g. "d1b24861s3d90s4e7ds..." or "0c19147cx7ecex4846x...",
+// where the byte separators are encoded as literal 's'/'x', never as '/' or
+// '.'. Allowing '/' or '.' let a crafted key such as
+// "/net/openvpn/v3/configuration/../../sessions/x" pass validation (path
+// traversal): the tail "../../sessions/x" matched. Restricting the tail to
+// [A-Za-z0-9_-] rejects any '/' or '.', so no traversal can survive.
+var PATH_TAIL = /^[A-Za-z0-9_-]+$/;
 
 // Truncates raw command output to a sane ceiling before any parsing runs, so a
 // process emitting gigabytes cannot blow up the string ops downstream.
@@ -276,6 +281,12 @@ function buildRows(configsResult, sessionsResult) {
     });
 }
 
+// Pairs a session to a config BY NAME. This is imposed by the CLI, not a
+// choice: `openvpn3 sessions-list` does not expose the config object path of a
+// running session and has no JSON mode, so the display name is the only key
+// available to merge the two listings. This is why duplicate display names are
+// intrinsically ambiguous here — see rowBySessionPath, which refuses to act
+// when the ambiguity would otherwise pick the wrong profile.
 function sessionByName(sessions, name) {
     for (var i = 0; i < sessions.length; i++) {
         if (sessions[i].name === name) {
@@ -297,33 +308,32 @@ function sessionState(session) {
         : "connecting";
 }
 
-// The name of the first connected session, else "".
-function activeSessionName(sessionsResult) {
+// The D-Bus session object path of the first connected session, else "".
+//
+// A19: this returns a session object PATH, not a display name. sessions-list
+// does not expose a session's config path (and has no JSON mode — a hard CLI
+// constraint), so this is the one unambiguous identity a session carries.
+// Callers resolve the readable name and the matching row from this path via
+// rowBySessionPath, so a duplicate display name can never point the UI at the
+// wrong profile. Falls back to the first session's path so the bar still
+// reflects activity while connecting.
+function activeSessionPath(sessionsResult) {
     var sessions = sessionsResult && sessionsResult.sessions instanceof Array
         ? sessionsResult.sessions
         : [];
     for (var i = 0; i < sessions.length; i++) {
         if (sessions[i].connected) {
-            return clip(sessions[i].name, MAX_NAME_LEN);
+            return validatePath(sessions[i].path, SESSION_PATH_PREFIX);
         }
     }
-    // Fall back to a connecting session so the bar still reflects activity.
-    return sessions.length > 0 ? clip(sessions[0].name, MAX_NAME_LEN) : "";
-}
-
-function rowByName(rows, name) {
-    var list = rows instanceof Array ? rows : [];
-    for (var i = 0; i < list.length; i++) {
-        if (list[i].name === name) {
-            return list[i];
-        }
-    }
-    return null;
+    return sessions.length > 0
+        ? validatePath(sessions[0].path, SESSION_PATH_PREFIX)
+        : "";
 }
 
 // Resolves a row by its config object path — the stable, unique identity used
-// by every selection / optimistic-state / toggle path in the UI. Unlike
-// rowByName it can never be ambiguous, so two profiles sharing a display name
+// by every selection / optimistic-state / toggle path in the UI. Unlike a
+// name lookup it can never be ambiguous, so two profiles sharing a display name
 // stay individually addressable. An empty query never matches (pathless rows
 // are not a selectable identity). Returns null when no row matches.
 function rowByPath(rows, configPath) {
@@ -337,6 +347,37 @@ function rowByPath(rows, configPath) {
         }
     }
     return null;
+}
+
+// Resolves the row for a running session by its session object path — the one
+// unambiguous identity a session carries (sessions-list exposes no config path
+// and has no JSON mode, a hard CLI constraint).
+//
+// A19 pitfall — this is where the name-based pairing leaks: buildRows matches
+// a session to a config BY NAME (the CLI gives us nothing better), so when two
+// profiles share a display name, BOTH rows are assigned the SAME sessionPath.
+// A lookup by session path would then match two rows and there is no honest way
+// to tell which profile the running tunnel actually belongs to. Rather than
+// guess (and risk disconnecting the wrong profile's tunnel), we REFUSE: this
+// returns the row only when exactly one row carries the path, and null when the
+// identity is ambiguous (0 or >1 matches). An empty query never matches.
+function rowBySessionPath(rows, sessionPath) {
+    var list = rows instanceof Array ? rows : [];
+    if (typeof sessionPath !== "string" || sessionPath === "") {
+        return null;
+    }
+    var found = null;
+    for (var i = 0; i < list.length; i++) {
+        if (list[i].sessionPath === sessionPath) {
+            if (found !== null) {
+                // Two rows share this session path (duplicate display names):
+                // the identity is ambiguous, so refuse rather than guess.
+                return null;
+            }
+            found = list[i];
+        }
+    }
+    return found;
 }
 
 // Human label for a row state. Labels are English to match the existing UI
@@ -376,9 +417,9 @@ if (typeof module !== "undefined") {
         parseSessionsList: parseSessionsList,
         sessionStateFromStatus: sessionStateFromStatus,
         buildRows: buildRows,
-        activeSessionName: activeSessionName,
-        rowByName: rowByName,
+        activeSessionPath: activeSessionPath,
         rowByPath: rowByPath,
+        rowBySessionPath: rowBySessionPath,
         stateLabel: stateLabel,
         validatePath: validatePath,
         clip: clip,

@@ -23,8 +23,18 @@ BarWidget {
     readonly property color idleColor: Qt.darker(activeColor, 1.55)
     readonly property color urgentColor: bar ? bar.urgent : Color.urgent
 
-    readonly property string labelText: vpnState === "connected"
-        ? "OpenVPN3: " + Model.clipName(service.activeName)
+    // The readable NAME of the active profile, re-derived from the row that
+    // matches the active session PATH — never the raw object path. Empty when
+    // nothing is up or when the identity is ambiguous (two profiles share a
+    // name, so rowBySessionPath refuses to pick one).
+    readonly property string activeName: {
+        if (service.activeSessionPath === "") return ""
+        var row = Model.rowBySessionPath(service.configs, service.activeSessionPath)
+        return row ? row.name : ""
+    }
+
+    readonly property string labelText: (vpnState === "connected" && activeName !== "")
+        ? "OpenVPN3: " + Model.clipName(activeName)
         : "OpenVPN3"
 
     readonly property color iconColor: {
@@ -48,10 +58,12 @@ BarWidget {
     }
 
     // The config object path of whatever session is currently active, resolved
-    // from the active session name through its row. "" when nothing is up.
+    // from the active session PATH through its row. "" when nothing is up or
+    // when the identity is ambiguous (rowBySessionPath refuses a duplicate
+    // name), so the quick-toggle never resolves to the wrong profile.
     function activeConfigPath() {
-        if (service.activeName === "") return ""
-        var row = Model.rowByName(service.configs, service.activeName)
+        if (service.activeSessionPath === "") return ""
+        var row = Model.rowBySessionPath(service.configs, service.activeSessionPath)
         return row ? String(row.configPath) : ""
     }
 
@@ -92,7 +104,7 @@ BarWidget {
 
     Connections {
         target: service
-        function onActiveNameChanged() {
+        function onActiveSessionPathChanged() {
             var active = root.activeConfigPath()
             if (active !== "") root.lastConnected = active
         }

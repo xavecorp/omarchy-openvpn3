@@ -7,6 +7,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-09-05
+
+### Security
+
+- Scrub the environment of every subprocess. The four `Process` objects now set
+  `clearEnvironment: true` and `environment: ({ PATH: "/usr/bin" })`, so an
+  inherited `BASH_ENV` (which `bash -c` sources even non-interactively, proven
+  to run arbitrary code), `LD_PRELOAD`, or `LD_LIBRARY_PATH` can no longer
+  influence the wrapped command. All binaries are already invoked by absolute
+  path, so the minimal PATH is sufficient. (A12)
+- Tighten the D-Bus object-path validator: the tail after the known prefix must
+  now match `^[A-Za-z0-9_-]+$` (was `^[A-Za-z0-9._/-]+$`), rejecting `.` and `/`
+  so a crafted `…/configuration/../../sessions/x` traversal no longer validates.
+  Real openvpn3 tails are flat word-char tokens, so nothing legitimate breaks. (A13)
+
+### Fixed
+
+- Never act on the wrong tunnel when two profiles share a display name. Identity
+  is now keyed on the session object path: `activeSessionName` became
+  `activeSessionPath`, and a new `rowBySessionPath` resolves a row only when
+  exactly one matches — returning nothing (so the action is refused with a clear
+  message) when a name collision makes it ambiguous, instead of guessing and
+  possibly disconnecting the wrong session. The displayed name is re-derived
+  from the resolved row, so an object path is never shown to the user. The
+  session↔config pairing in `buildRows` stays name-based because
+  `sessions-list` exposes no config path and has no JSON mode — this CLI
+  constraint is now documented, and bounded by the refuse-on-ambiguity guard. (A19)
+
 ## [0.3.2] - 2026-09-05
 
 ### Removed
