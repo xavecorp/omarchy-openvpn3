@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.1] - 2026-09-06
+
+### Documentation
+
+- Clarify why `session-start` is delegated to a floating terminal (A9): the
+  command is interactive not only through a stdin credentials prompt
+  (user-locked / 2FA / static-challenge) but also through web / SAML / OIDC
+  auth, which opens a browser and leaves the session awaiting external
+  authentication. A headless `Process` can host neither. Confirmed against a
+  real web-auth profile. Comments in `Service.qml`, `Panel.qml` and
+  `BarWidget.qml` updated accordingly; no behaviour change.
+
 ## [0.4.0] - 2026-09-05
 
 ### Security

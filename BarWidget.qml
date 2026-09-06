@@ -86,9 +86,9 @@ BarWidget {
     }
 
     // Start a session in a floating terminal (see Panel.startInTerminal for the
-    // rationale: session-start can prompt on stdin, which a headless Process
-    // cannot answer). Service.startArgv validates the path and returns [] to
-    // refuse; we only ever run a validated argv.
+    // rationale: session-start is interactive — stdin prompt or web/SAML/OIDC
+    // browser auth — which a headless Process cannot host). Service.startArgv
+    // validates the path and returns [] to refuse; we only ever run a validated argv.
     function startInTerminal(configPath) {
         var argv = service.startArgv(configPath)
         if (argv.length === 0) return

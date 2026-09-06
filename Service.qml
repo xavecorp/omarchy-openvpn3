@@ -6,9 +6,11 @@ import "Model.js" as Model
 // Headless owner of every openvpn3 CLI invocation. It holds no visuals so the
 // panel can change shape without touching any of this. It also has no `bar`
 // reference, which is why the one interactive command — session-start, which
-// may prompt for credentials on stdin — is NOT run here: it is delegated to a
-// real terminal by the panel (which owns `bar`). This service resolves and
-// validates the start argv (startArgv) but never launches it.
+// needs a user-facing context to authenticate (a stdin prompt for
+// user-locked/2FA/static-challenge profiles, or a browser for web/SAML/OIDC
+// auth) — is NOT run here: it is delegated to a real terminal by the panel
+// (which owns `bar`). This service resolves and validates the start argv
+// (startArgv) but never launches it.
 //
 // Two read commands feed the UI on a poll:
 //   openvpn3 configs-list --json  -> installed profiles, keyed by object path
@@ -320,12 +322,14 @@ Item {
 
     // Resolves the argv that starts a session for a profile, or [] when the
     // profile can't be safely started. This service does NOT run session-start
-    // itself: that command can prompt for credentials on stdin (user-locked /
-    // 2FA / static-challenge profiles) and, given no stdin, loops forever on
-    // the prompt while leaving a stuck backend behind. A headless Process has
-    // no stdin to offer, so the start is delegated to a real terminal by the
-    // panel (which owns `bar`). Here we only do the validation: resolve the
-    // exact row by config object path and refuse an unknown/empty path.
+    // itself: that command is interactive. It may prompt for credentials on
+    // stdin (user-locked / 2FA / static-challenge profiles) — with no stdin it
+    // loops forever on the prompt — or it may require web/SAML/OIDC auth, which
+    // opens a browser and leaves the session awaiting external authentication.
+    // Either way a headless Process is the wrong host, so the start is delegated
+    // to a real terminal by the panel (which owns `bar`). Here we only do the
+    // validation: resolve the exact row by config object path and refuse an
+    // unknown/empty path.
     function startArgv(configPath) {
         if (openvpn3Path === "" || configPath === "")
             return []
