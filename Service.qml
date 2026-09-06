@@ -108,9 +108,16 @@ Item {
         if (!available) return "error"
         if (pendingPath !== "")
             return pendingAction === "connect" ? "connecting" : "disconnected"
+        // A corrupted configs read left us on a stale view; it cannot prove the
+        // tunnel is still up, so never surface "connected" from it. Report
+        // "error" (urgent color; lastError/tooltip explains). Placed after the
+        // pendingPath block so an in-flight optimistic action still wins.
+        if (_configsStale) return "error"
         if (activeName === "") return "disconnected"
         var row = Model.rowByName(configs, activeName)
-        return row ? row.state : "connected"
+        // If the active session name is not yet reflected in a row, never claim
+        // "connected" — the tunnel state is unproven. Fall back to "connecting".
+        return row ? row.state : "connecting"
     }
 
     // Raw command output buffers (already truncated on assignment).
@@ -121,6 +128,14 @@ Item {
     // Latch set when a read watchdog fires, so a late onExited cannot resurrect
     // the aborted read chain or apply stale output.
     property bool _readAborted: false
+
+    // Latch set when a configs read returns invalid data. We deliberately keep
+    // the last good view on screen (so profiles do not vanish), but that view
+    // may describe a tunnel that has since dropped. While stale we must never
+    // report "connected" from it: the Lot 1 rule is to never claim protection
+    // without proof, and a corrupted read is not proof. Cleared on any clean
+    // configs read.
+    property bool _configsStale: false
 
     // Latch set the moment the component starts tearing down. Every onExited
     // handler bails on it so a process reaped during destruction can never
@@ -231,6 +246,18 @@ Item {
     function applyReads() {
         var configsResult = Model.parseConfigsListJson(_configsOutput)
         var sessionsResult = Model.parseSessionsList(_sessionsOutput)
+
+        // If the configs read produced invalid data (e.g. malformed JSON from a
+        // stderr warning bleeding into the stream), do NOT wipe the view: an
+        // empty list would make every profile silently vanish behind a bland
+        // "No configs" message. Surface the failure and keep the last good view.
+        if (configsResult.ok === false) {
+            root.lastError = "openvpn3 configs-list returned invalid data"
+            _configsStale = true
+            return
+        }
+        _configsStale = false
+
         configs = Model.buildRows(configsResult, sessionsResult)
         activeName = Model.activeSessionName(sessionsResult)
 

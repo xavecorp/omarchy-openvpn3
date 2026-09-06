@@ -222,8 +222,28 @@ test("parseSessionsList sanitizes injected escape codes in status/name", () => {
     assert.strictEqual(result.sessions.length, 1);
     assert.ok(!/[\u0000-\u001F]/.test(result.sessions[0].name));
     assert.ok(!/[\u0000-\u001F]/.test(result.sessions[0].status));
-    // Status still classified as connected despite the injected escape.
+    // No control chars survive into the displayed status. Note the state is
+    // resolved from the sanitized status with an ANCHORED "\bclient connected\b"
+    // match: an escape glued to the label (…[2JClient connected) breaks the word
+    // boundary and is deliberately NOT trusted as connected — corrupt input must
+    // never be reported as a live tunnel.
+    assert.strictEqual(result.sessions[0].connected, false);
+    assert.strictEqual(result.sessions[0].state, "connecting");
+});
+
+test("parseSessionsList classifies a clean connected status with an injected name escape", () => {
+    // Escapes injected into the NAME field must not affect the status parse: a
+    // well-formed status still reads as connected.
+    const hostile = `-----------------------------------------------------------------------------
+        Path: /net/openvpn/v3/sessions/dddd
+ Config name: evil\u001b]0;pwned\u0007
+      Status: Connection, Client connected
+-----------------------------------------------------------------------------`;
+    const result = Model.parseSessionsList(hostile);
+    assert.strictEqual(result.sessions.length, 1);
+    assert.ok(!/[\u0000-\u001F]/.test(result.sessions[0].name));
     assert.strictEqual(result.sessions[0].connected, true);
+    assert.strictEqual(result.sessions[0].state, "connected");
 });
 
 test("heroText clips the active name", () => {
@@ -363,4 +383,127 @@ test("sessionPathForConfigPath resolves the running session by config path", () 
     // Unknown / empty config paths resolve to no session, never a wrong one.
     assert.strictEqual(Model.sessionPathForConfigPath(rows, "/net/openvpn/v3/configuration/other"), "");
     assert.strictEqual(Model.sessionPathForConfigPath(rows, ""), "");
+});
+
+
+// ---- A1: StatusMinor -> state mapping (anchored, never substring) ----------
+
+// Real StatusMinor labels emitted by openvpn3 (see `strings /usr/bin/openvpn3`),
+// each wrapped in the "Connection, <label>" shape the CLI prints on the Status
+// row, plus the bare labels for authentication/timeout events.
+test("sessionStateFromStatus maps real StatusMinor labels to states", () => {
+    // The critical case: "disconnected" contains "connected" as a substring.
+    assert.strictEqual(Model.sessionStateFromStatus("Connection, Client connected"), "connected");
+    assert.strictEqual(Model.sessionStateFromStatus("Connection, Client disconnected"), "disconnected");
+    assert.strictEqual(
+        Model.sessionStateFromStatus("Connection, Client disconnected by server"),
+        "disconnected"
+    );
+    assert.strictEqual(Model.sessionStateFromStatus("Connection, Client disconnecting"), "disconnected");
+    assert.strictEqual(Model.sessionStateFromStatus("Connection, Client connecting"), "connecting");
+    assert.strictEqual(
+        Model.sessionStateFromStatus("Configuration requires user input: Username/password"),
+        "auth"
+    );
+    assert.strictEqual(Model.sessionStateFromStatus("Connection, Client connection paused"), "paused");
+    assert.strictEqual(Model.sessionStateFromStatus("Connection, Authentication failed"), "error");
+    assert.strictEqual(
+        Model.sessionStateFromStatus("Connection, Client authentication failed"),
+        "error"
+    );
+    assert.strictEqual(Model.sessionStateFromStatus("Connection, Client connection failed"), "error");
+    assert.strictEqual(Model.sessionStateFromStatus("Connection, Client process exited"), "error");
+    assert.strictEqual(Model.sessionStateFromStatus("Connection, Connection timeout"), "error");
+    assert.strictEqual(Model.sessionStateFromStatus("Connection, Client reconnect"), "connecting");
+    assert.strictEqual(Model.sessionStateFromStatus("Connection, Client connection resuming"), "connecting");
+});
+
+test("sessionStateFromStatus defaults to connecting, never connected", () => {
+    assert.strictEqual(Model.sessionStateFromStatus(""), "connecting");
+    assert.strictEqual(Model.sessionStateFromStatus(undefined), "connecting");
+    assert.strictEqual(Model.sessionStateFromStatus("Some unknown status"), "connecting");
+});
+
+test("finalizeSession exposes the resolved state and a derived connected flag", () => {
+    // A server-side kick is a persistent state whose status still contains the
+    // "connected" substring — it must resolve to disconnected, not connected.
+    const kicked = `-----------------------------------------------------------------------------
+        Path: /net/openvpn/v3/sessions/kkkk
+ Config name: kicked-profile
+      Status: Connection, Client disconnected by server
+-----------------------------------------------------------------------------`;
+    const result = Model.parseSessionsList(kicked);
+    assert.strictEqual(result.sessions.length, 1);
+    assert.strictEqual(result.sessions[0].state, "disconnected");
+    assert.strictEqual(result.sessions[0].connected, false);
+});
+
+// ---- A2: multi-session parsing (blocks split on the Path: line) ------------
+
+// Two sessions separated only by a blank line — no separator rule between the
+// blocks, only at the very top and bottom. The connected one must survive.
+const twoSessionsBlankSeparated = `-----------------------------------------------------------------------------
+        Path: /net/openvpn/v3/sessions/1111
+ Config name: alpha
+      Status: Connection, Client connected
+
+        Path: /net/openvpn/v3/sessions/2222
+ Config name: beta
+      Status: Connection, Client connecting
+-----------------------------------------------------------------------------`;
+
+test("parseSessionsList splits two blocks separated by a blank line", () => {
+    const result = Model.parseSessionsList(twoSessionsBlankSeparated);
+    assert.strictEqual(result.sessions.length, 2);
+    assert.deepStrictEqual(
+        result.sessions.map((s) => s.name),
+        ["alpha", "beta"]
+    );
+    // The connected session is preserved and correctly classified.
+    const alpha = result.sessions.find((s) => s.name === "alpha");
+    assert.strictEqual(alpha.state, "connected");
+    assert.strictEqual(alpha.connected, true);
+    const beta = result.sessions.find((s) => s.name === "beta");
+    assert.strictEqual(beta.state, "connecting");
+});
+
+test("activeSessionName picks the connected session out of a blank-separated list", () => {
+    assert.strictEqual(
+        Model.activeSessionName(Model.parseSessionsList(twoSessionsBlankSeparated)),
+        "alpha"
+    );
+});
+
+// Two sessions delimited by a separator rule between blocks (the other layout)
+// must also yield two sessions.
+const twoSessionsSeparatorSeparated = `-----------------------------------------------------------------------------
+        Path: /net/openvpn/v3/sessions/1111
+ Config name: alpha
+      Status: Connection, Client connected
+-----------------------------------------------------------------------------
+        Path: /net/openvpn/v3/sessions/2222
+ Config name: beta
+      Status: Connection, Client connecting
+-----------------------------------------------------------------------------`;
+
+test("parseSessionsList splits two blocks separated by a separator rule", () => {
+    const result = Model.parseSessionsList(twoSessionsSeparatorSeparated);
+    assert.strictEqual(result.sessions.length, 2);
+    assert.deepStrictEqual(
+        result.sessions.map((s) => s.name),
+        ["alpha", "beta"]
+    );
+    assert.strictEqual(Model.activeSessionName(result), "alpha");
+});
+
+// ---- A3: state -> label table ----------------------------------------------
+
+test("stateLabel covers every reachable state with English labels", () => {
+    assert.strictEqual(Model.stateLabel("connected"), "Connected");
+    assert.strictEqual(Model.stateLabel("connecting"), "Connecting…");
+    assert.strictEqual(Model.stateLabel("auth"), "Auth required");
+    assert.strictEqual(Model.stateLabel("paused"), "Paused");
+    assert.strictEqual(Model.stateLabel("error"), "Failed");
+    assert.strictEqual(Model.stateLabel("disconnected"), "Off");
+    assert.strictEqual(Model.stateLabel("anything-else"), "Off");
 });

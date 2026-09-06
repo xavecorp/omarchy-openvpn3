@@ -57,10 +57,15 @@ Panel {
     readonly property string activeName: service ? service.activeName : ""
 
     // Colour for a given state string, used by both the header status dot and
-    // each row dot.
+    // each row dot. Only `connected` is ever green — everything else must read
+    // as "not fully protected": auth/paused/connecting share the amber
+    // connecting hue, error takes the theme urgent colour, and anything else is
+    // the muted off colour.
     function colorForState(state) {
         if (state === "connected") return connectedColor
         if (state === "connecting") return connectingColor
+        if (state === "auth") return connectingColor
+        if (state === "paused") return connectingColor
         if (state === "error") return urgent
         return offColor
     }
